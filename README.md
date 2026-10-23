@@ -14,14 +14,39 @@ server, Git, the GitHub CLI and the toolchains needed to work on the owner's pro
 
 ## Status
 
-Under construction. The repository scaffolding is in place; the image, its Compose harness, the
-smoke tests and the operations docs follow. Nothing is published yet, and deploying it to the
-homelab is a separate, later step.
+The image works and is tested locally: desktop attach over SSH, Remote Control from the phone,
+sessions that survive a client disconnect and resume after a container restart with no client
+attached, and the toolchains of the owner's projects. Nothing is published yet, and deploying it
+to the homelab is a separate, later step
+([deployment requirements](docs/deployment-requirements.md)).
+
+## Quick start (local)
+
+```bash
+make local-secrets       # authorizes your ~/.ssh public key
+make compose-up          # builds and starts it; SSH on 127.0.0.1:2222
+make image-test          # smoke and supervision tests
+```
+
+Then connect with Herdr and log in to Claude: [docs/operations.md](docs/operations.md).
+
+## Documentation
+
+- [Operations](docs/operations.md): interface, first connection, restarts, `herdquay doctor`,
+  recovery.
+- [Security model](docs/security.md): boundaries, secrets, accepted risks, supply chain.
+- [Development environment](docs/dev-environment.md): the toolchains, the projects they were
+  chosen from, what does not run inside.
+- [Updating](docs/updating.md): every pin, how to bump it.
+- [Docker access](docs/docker-diagnostics.md): why there is no Docker API, and the options.
+- [Deployment requirements](docs/deployment-requirements.md): what the homelab deployment must
+  provide.
+- [Comparison with rozsival/devbox](docs/devbox-comparison.md).
 
 ## Design principles
 
-- A [Docker Hardened Image](https://docs.docker.com/dhi/) Debian base (`dhi.io/debian-base`),
-  pinned by digest.
+- An Ubuntu 26.04 LTS base (`ubuntu:26.04`), pinned by tag so the official image's security
+  rebuilds are picked up: the owner's desktop release, close to GitHub's Ubuntu runners.
 - No root at runtime: SSH, Herdr and Claude run as one unprivileged user, UID:GID 568:568.
 - Nothing secret in the image or in Git: the GitHub SSH key and token arrive as secret files at
   run time.
