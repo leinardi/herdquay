@@ -1,3 +1,7 @@
 # .gitignore
 *.iml
 .idea/*
+
+# DCLint owns the Compose files
+compose.yaml
+compose.*.yaml

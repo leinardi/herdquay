@@ -1,0 +1,29 @@
+# Read from the root of the build context (the repository root), the only place a plain
+# .dockerignore is honoured. The image is built from the Dockerfile and container/; nothing else in
+# the repository is an input.
+
+# VCS
+.git
+.gitignore
+.gitattributes
+
+# CI, docs, tests and agent tooling
+.github
+.claude
+.agents
+.serena
+docs
+tests
+*.md
+
+# Local secrets and state for the Compose harness: never part of an image
+local
+
+# Editor/IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Tool caches
+.cache

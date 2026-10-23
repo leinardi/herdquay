@@ -59,6 +59,16 @@ repos:
         additional_dependencies: ["prettier@3.9.9"]
         files: \.(yml|yaml)$
         args: ["--write"]
+      # Every code file carries the MIT header (scripts/check-license-headers.sh says which files
+      # are governed). Reads the whole tree, so it always runs; pinned to one stage because
+      # always_run makes a hook eligible at every installed stage, and commit-msg is one of them.
+      - id: check-license-headers
+        name: license headers
+        entry: scripts/check-license-headers.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.38.0
     hooks:
@@ -68,6 +78,21 @@ repos:
         name: "yamllint (parsable output)"
         args: ["--format", "parsable"]
         stages: [manual]
+  # The local Compose harness. dclint fixes it in place, so .prettierignore keeps prettier off it
+  # instead of the two fighting over the same file.
+  - repo: https://github.com/docker-compose-linter/pre-commit-dclint
+    rev: v3.1.0
+    hooks:
+      - id: dclint
+        language_version: 22.15.0
+        files: ^(?:.*/)?(?:docker-)?compose(?:\.[\w-]+)?\.ya?ml$
+        args: [--fix]
+  # Runs the system hadolint binary (language: system upstream): install it locally, CI does with
+  # .github/actions/setup-hadolint, and the HerdQuay image ships the same release.
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.15.1
+    hooks:
+      - id: hadolint
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.4.0
     hooks:

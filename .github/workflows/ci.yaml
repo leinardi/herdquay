@@ -19,9 +19,9 @@ permissions:
 
 jobs:
   # The authoritative lint gate: every pre-commit hook over every file. The hooks bring their own
-  # tools (pre-commit installs them); actionlint also runs the runner's preinstalled shellcheck over
-  # the workflows' run: scripts. A repository that adds a hook needing a system tool installs that
-  # tool here, and one whose hook runs in a dedicated job lists it in SKIP with the job's name.
+  # tools (pre-commit installs them), except hadolint, whose hook runs the system binary installed
+  # below; actionlint also runs the runner's preinstalled shellcheck over the workflows' run:
+  # scripts. A hook that runs in a dedicated job instead is listed in SKIP with the job's name.
   pre-commit-all:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -37,6 +37,9 @@ jobs:
 
       - name: Install pre-commit
         run: pip install --no-cache-dir pre-commit==4.6.2
+
+      - name: Set up hadolint
+        uses: ./.github/actions/setup-hadolint
 
       # Restore only: pre-commit-warmup.yaml saves the entry on main under the same key.
       - name: Restore the pre-commit cache
@@ -94,12 +97,26 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The hadolint hook runs the system binary, which the runner does not have.
+      - name: Set up hadolint
+        uses: ./.github/actions/setup-hadolint
+
       - name: Run pre-commit hooks + reviewdog diff
         uses: leinardi/gha-pre-commit-reviewdog-actions/pre-commit-hooks@007919a45a04b0c52dfbb46732019dc4831fc03c # v1.0.3
         with:
           from-ref: ${{ github.event.pull_request.base.sha }}
           to-ref: ${{ github.event.pull_request.head.sha }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          hooks: |
+            check-merge-conflict
+            end-of-file-fixer
+            trailing-whitespace
+            check-yaml
+            check-json
+            check-toml
+            check-added-large-files
+            dclint
+            hadolint
 
   markdownlint:
     if: github.event_name == 'pull_request'
