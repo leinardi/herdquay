@@ -33,8 +33,12 @@ it out of shares and replicate it only to trusted targets.
 | Swarm secret | Target | Source |
 | --- | --- | --- |
 | authorized keys | `/run/secrets/authorized_keys` | the desktop and VPN client public keys (Ansible vars) |
-| GitHub SSH key | `/run/secrets/github_ssh_key` | Ansible Vault (ed25519, no passphrase, created on the desktop; its public key added to GitHub) |
-| GitHub token | `/run/secrets/github_token` | **not in the Vault**: created by hand on the manager (`docker secret create herdquay_github_token -`, from stdin) and referenced as `external: true` |
+| GitHub SSH key | `/run/secrets/github_ssh_key` | **created by hand, not in the Vault**: an ed25519 key without a passphrase, generated on the desktop, its public key added to GitHub; `docker secret create herdquay_github_ssh_key <file>` on the manager, then the local copy deleted; referenced as `external: true` |
+| GitHub token | `/run/secrets/github_token` | **created by hand, not in the Vault**: `docker secret create herdquay_github_token -` on the manager, from stdin; referenced as `external: true` |
+
+Neither GitHub credential passes through Ansible or any repository: Ansible only references the
+two secret names, so a deployment without them fails to start instead of running without
+GitHub access.
 
 Each with `uid: "568"`, `gid: "568"`, `mode: 0400`. Rotation: a new versioned secret name, update
 the reference, redeploy, delete the old one.
