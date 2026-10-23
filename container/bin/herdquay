@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+#
+# MIT License
+#
+# Copyright (c) 2026 Roberto Leinardi
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# HerdQuay's operator CLI.
+#
+# Usage: herdquay doctor [--network]
+#
+# doctor checks the running environment and prints one line per check: ok, warn or FAIL. It exits 1
+# when any check fails. --network adds the checks that reach GitHub (SSH authentication and the
+# token), which need the secrets and outbound access.
+
+set -euo pipefail
+
+failures=0
+warnings=0
+
+ok() { printf '  ok    %s\n' "$*"; }
+warn() {
+	printf '  warn  %s\n' "$*"
+	warnings=$((warnings + 1))
+}
+fail() {
+	printf '  FAIL  %s\n' "$*"
+	failures=$((failures + 1))
+}
+
+section() { printf '\n%s\n' "$*"; }
+
+check_tool() {
+	local name="$1" version
+	shift
+	if ! command -v "${name}" >/dev/null; then
+		fail "${name}: not on PATH"
+		return
+	fi
+	version="$("$@" 2>&1 | head -n 1)" || {
+		fail "${name}: '$*' failed"
+		return
+	}
+	ok "${name}: ${version}"
+}
+
+check_secret() {
+	local label="$1" file="$2" required="$3"
+	if [[ -r ${file} && -s ${file} ]]; then
+		ok "${label}: ${file} readable"
+	elif [[ ${required} == required ]]; then
+		fail "${label}: ${file} missing or unreadable"
+	else
+		warn "${label}: ${file} missing or unreadable (optional)"
+	fi
+}
+
+doctor() {
+	local network=0 status
+	[[ ${1:-} == --network ]] && network=1
+
+	section "Identity"
+	if [[ $(id -u) -eq 0 ]]; then
+		fail "running as root"
+	else
+		ok "running as $(id -un) ($(id -u):$(id -g))"
+	fi
+	if pgrep -u 0 >/dev/null 2>&1; then
+		fail "a process runs as root: $(pgrep -u 0 -l | head -n 3 | tr '\n' ' ')"
+	else
+		ok "no process runs as root"
+	fi
+
+	section "Services"
+	if ss -Hltn 'sport = :2222' | grep -q .; then ok "sshd listens on 2222"; else fail "sshd is not listening on 2222"; fi
+	if herdr status server 2>/dev/null | grep -q '^status: running'; then
+		ok "Herdr server running"
+	else
+		fail "Herdr server not running"
+	fi
+	if herdr integration status 2>/dev/null | grep -q '^claude: current'; then
+		ok "Herdr Claude integration current"
+	else
+		warn "Herdr Claude integration not current (herdr integration install claude)"
+	fi
+	if jq -e '.remoteControlAtStartup == true' "${HOME}/.claude/settings.json" >/dev/null 2>&1; then
+		ok "Remote Control enabled for every Claude session"
+	else
+		warn "remoteControlAtStartup is not true in ~/.claude/settings.json"
+	fi
+	status="${HOME}/.local/state/herdquay/agents-status.json"
+	if [[ ! -s ${status} ]]; then
+		warn "no agent restore check yet (${status})"
+	elif jq -e '.missing == []' "${status}" >/dev/null; then
+		ok "every recorded Claude session resumed ($(jq -r .checked "${status}"))"
+	else
+		warn "not resumed: $(jq -r '[.missing[] | .cwd] | join(", ")' "${status}")"
+	fi
+
+	section "Secrets"
+	check_secret "authorized keys" "${HERDQUAY_AUTHORIZED_KEYS_FILE:-/run/secrets/authorized_keys}" required
+	check_secret "GitHub SSH key" /run/secrets/github_ssh_key optional
+	check_secret "GitHub token" "${HERDQUAY_GITHUB_TOKEN_FILE:-/run/secrets/github_token}" optional
+	if [[ -n ${DOCKER_HOST:-} ]]; then
+		warn "DOCKER_HOST is set (${DOCKER_HOST}): Docker diagnostics are an opt-in deployment decision"
+	else
+		ok "no Docker API configured (DOCKER_HOST unset)"
+	fi
+	if [[ -e /var/run/docker.sock ]]; then
+		fail "/var/run/docker.sock is mounted: HerdQuay must never get the Docker socket"
+	fi
+
+	section "Tools"
+	check_tool git git --version
+	check_tool gh gh --version
+	check_tool ssh ssh -V
+	check_tool herdr herdr --version
+	check_tool claude claude --version
+	check_tool go go version
+	check_tool node node --version
+	check_tool npm npm --version
+	check_tool python3 python3 --version
+	check_tool pre-commit pre-commit --version
+	check_tool make make --version
+	check_tool gcc gcc --version
+	check_tool golangci-lint golangci-lint version
+	check_tool goreleaser bash -c 'goreleaser --version | sed -n "s/^GitVersion: */goreleaser /p"'
+	check_tool hadolint hadolint --version
+	check_tool docker docker --version
+	check_tool jq jq --version
+	check_tool yq yq --version
+	check_tool rg rg --version
+
+	if ((network)); then
+		section "GitHub"
+		local out
+		out="$(ssh -T -o BatchMode=yes -o ConnectTimeout=10 git@github.com 2>&1 || true)"
+		if grep -q 'successfully authenticated' <<<"${out}"; then
+			ok "SSH: ${out%%!*}"
+		else
+			fail "SSH to github.com: ${out}"
+		fi
+		if gh auth status >/dev/null 2>&1; then
+			ok "gh: $(gh api user --jq .login 2>/dev/null || echo authenticated)"
+		else
+			fail "gh is not authenticated (token file missing or rejected)"
+		fi
+	fi
+
+	printf '\n%d failure(s), %d warning(s)\n' "${failures}" "${warnings}"
+	((failures == 0))
+}
+
+case "${1:-}" in
+doctor)
+	shift
+	doctor "$@"
+	;;
+*)
+	echo "Usage: herdquay doctor [--network]" >&2
+	exit 2
+	;;
+esac

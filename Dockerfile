@@ -22,10 +22,10 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-# The DHI Debian 13 dev variant: the only DHI Debian image with apt and a shell, which an
-# interactive environment needs. Pinned by tag, not digest: DHI rebuilds it far too often for a
-# digest pin to be maintainable, and every rebuild is a security update we want.
-ARG BASE_IMAGE=dhi.io/debian-base:trixie-dev
+# Ubuntu 26.04 LTS: the owner's desktop release, close to GitHub's Ubuntu runners, and the distro
+# Playwright supports best. Pinned by tag, not digest: the official image is rebuilt with every
+# security update, and each rebuild is one we want.
+ARG BASE_IMAGE=ubuntu:26.04
 
 # -------------------------------------------------------------------------------------------------
 # fetch: downloads and verifies every artifact that does not come from apt. Nothing from this
@@ -34,9 +34,10 @@ ARG BASE_IMAGE=dhi.io/debian-base:trixie-dev
 FROM ${BASE_IMAGE} AS fetch
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends ca-certificates curl gnupg jq \
+	&& apt-get install -y --no-install-recommends ca-certificates curl gnupg jq xz-utils \
 	&& rm -rf /var/lib/apt/lists/*
 
 # Herdr publishes neither a checksum file nor a signature: the digest is the release asset's, from
@@ -67,50 +68,201 @@ RUN base="https://downloads.claude.ai/claude-code-releases/${CLAUDE_VERSION}" \
 	&& echo "${checksum}  /tmp/claude" | sha256sum --check --strict - \
 	&& install -D -m 0755 /tmp/claude /usr/local/bin/claude
 
+# Go, one toolchain for every project: their go.mod lines are minimums (1.26.x), and
+# GOTOOLCHAIN=auto fetches a newer one for a module that asks for it. Digest from go.dev/dl JSON.
+ARG GO_VERSION=1.26.10
+ARG GO_SHA256=ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5
+RUN curl -fsSL -o /tmp/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+	&& echo "${GO_SHA256}  /tmp/go.tar.gz" | sha256sum --check --strict - \
+	&& tar -C /usr/local -xzf /tmp/go.tar.gz \
+	&& rm /tmp/go.tar.gz
+
+# Node.js, the 24 line every Node project here builds with. Digest from the release's SHASUMS256.txt.
+ARG NODE_VERSION=24.22.1
+ARG NODE_SHA256=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+RUN curl -fsSL -o /tmp/node.tar.xz \
+	"https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+	&& echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum --check --strict - \
+	&& install -d /opt/node \
+	&& tar -C /opt/node --strip-components=1 -xJf /tmp/node.tar.xz \
+	&& rm /tmp/node.tar.xz
+
+# Release binaries, each checked against its GitHub release asset digest
+# (gh api repos/<owner>/<repo>/releases/tags/<tag>).
+ARG GH_VERSION=2.103.0
+ARG GH_SHA256=fdd768eb70f6409f80fcfa9f3a1c0adf0fc98d827ab3ce0bed2ac22762c5d786
+ARG GOLANGCI_LINT_VERSION=2.14.0
+ARG GOLANGCI_LINT_SHA256=ab90aeb7b066f92a33415b638a50fe5344bbb75a0d32ad30cc248d88f81032ab
+ARG GORELEASER_VERSION=2.18.1
+ARG GORELEASER_SHA256=0c6122af0ad8fd65638889bf7d3757148b2f80eeff9f079682f0655df66ec8e8
+ARG HADOLINT_VERSION=2.15.1
+ARG HADOLINT_SHA256=c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
+ARG YQ_VERSION=4.54.1
+ARG YQ_SHA256=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
+RUN fetch() { curl -fsSL -o "$1" "$2" && echo "$3  $1" | sha256sum --check --strict -; } \
+	&& fetch /tmp/gh.tar.gz \
+		"https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
+		"${GH_SHA256}" \
+	&& tar -xzf /tmp/gh.tar.gz -C /tmp \
+	&& install -D -m 0755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /opt/gh/bin/gh \
+	&& fetch /tmp/golangci-lint.tar.gz \
+		"https://github.com/golangci/golangci-lint/releases/download/v${GOLANGCI_LINT_VERSION}/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64.tar.gz" \
+		"${GOLANGCI_LINT_SHA256}" \
+	&& tar -xzf /tmp/golangci-lint.tar.gz -C /tmp \
+	&& install -D -m 0755 "/tmp/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64/golangci-lint" \
+		/usr/local/bin/golangci-lint \
+	&& fetch /tmp/goreleaser.tar.gz \
+		"https://github.com/goreleaser/goreleaser/releases/download/v${GORELEASER_VERSION}/goreleaser_Linux_x86_64.tar.gz" \
+		"${GORELEASER_SHA256}" \
+	&& tar -xzf /tmp/goreleaser.tar.gz -C /tmp goreleaser \
+	&& install -D -m 0755 /tmp/goreleaser /usr/local/bin/goreleaser \
+	&& fetch /usr/local/bin/hadolint \
+		"https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64" \
+		"${HADOLINT_SHA256}" \
+	&& fetch /usr/local/bin/yq \
+		"https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" \
+		"${YQ_SHA256}" \
+	&& chmod 0755 /usr/local/bin/hadolint /usr/local/bin/yq \
+	&& rm -rf /tmp/*
+
+# Docker's apt signing key, asserted to be the one Docker documents (primary key fingerprint).
+ARG DOCKER_SIGNER_FINGERPRINT=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+RUN curl -fsSL -o /tmp/docker.asc https://download.docker.com/linux/ubuntu/gpg \
+	&& test "$(gpg --show-keys --with-colons /tmp/docker.asc | awk -F: '$1 == "fpr" { print $10; exit }')" \
+		= "${DOCKER_SIGNER_FINGERPRINT}" \
+	&& install -D -m 0644 /tmp/docker.asc /etc/apt/keyrings/docker.asc
+
 # -------------------------------------------------------------------------------------------------
 # final
 # -------------------------------------------------------------------------------------------------
 FROM ${BASE_IMAGE}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ARG DEBIAN_FRONTEND=noninteractive
 
 # The unprivileged user everything runs as. 568:568 is the homelab's apps user, so the image works
 # on its datasets unchanged; override at build time for another host.
 ARG HERDQUAY_UID=568
 ARG HERDQUAY_GID=568
 
-# python3 is needed by Herdr's Claude integration hook, which reports each conversation's session id
-# so it can be resumed after a restart. openssh-server's postinst generates host keys; they are deleted, because the real host key is
-# generated once at run time on the persistent home volume.
+# The Docker CLI and its plugins, client only: there is no daemon in or for this container.
+ARG DOCKER_CLI_VERSION=5:29.9.2-1~ubuntu.26.04~resolute
+ARG DOCKER_BUILDX_VERSION=0.38.1-1~ubuntu.26.04~resolute
+ARG DOCKER_COMPOSE_VERSION=5.6.1-1~ubuntu.26.04~resolute
+
+COPY --from=fetch /etc/apt/keyrings/docker.asc /etc/apt/keyrings/docker.asc
+
+# Ubuntu packages: the shell and runner-style CLI tools, the build toolchain, Python for pre-commit
+# and for Herdr's Claude integration hook (it reports each conversation's session id, so it can be
+# resumed after a restart), and sshd. openssh-server's postinst generates host keys; they are
+# deleted, because the real host key is generated once at run time on the persistent home volume.
+# The base has no CA certificates, which apt needs for Docker's HTTPS repository: they come first.
 RUN apt-get update \
+	&& apt-get install -y --no-install-recommends ca-certificates \
+	&& echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu resolute stable" \
+		>/etc/apt/sources.list.d/docker.list \
+	&& apt-get update \
 	&& apt-get install -y --no-install-recommends \
 		bash-completion \
+		bc \
+		build-essential \
 		ca-certificates \
 		curl \
+		bind9-dnsutils \
+		"docker-buildx-plugin=${DOCKER_BUILDX_VERSION}" \
+		"docker-ce-cli=${DOCKER_CLI_VERSION}" \
+		"docker-compose-plugin=${DOCKER_COMPOSE_VERSION}" \
+		fd-find \
+		file \
+		gawk \
 		git \
+		git-lfs \
+		gnupg \
+		htop \
 		iproute2 \
+		iputils-ping \
 		jq \
 		less \
+		lsof \
+		nano \
 		ncurses-term \
+		netcat-openbsd \
 		openssh-client \
 		openssh-server \
+		openssl \
+		patch \
+		pkg-config \
 		procps \
 		python3 \
+		python3-venv \
+		ripgrep \
+		rsync \
+		sqlite3 \
+		strace \
 		tini \
+		tree \
+		unzip \
+		vim \
+		wget \
+		xz-utils \
+		zip \
+		zstd \
 	&& rm -rf /var/lib/apt/lists/* \
-	&& rm -f /etc/ssh/ssh_host_*
+	&& rm -f /etc/ssh/ssh_host_* \
+	&& ln -s /usr/bin/fdfind /usr/local/bin/fd
 
-# The DHI base has no useradd (no passwd package), so the account is written directly. No password
-# hash: sshd only accepts keys, and the account has no sudo.
-RUN echo "herdquay:x:${HERDQUAY_GID}:" >>/etc/group \
-	&& echo "herdquay:x:${HERDQUAY_UID}:${HERDQUAY_GID}:HerdQuay:/home/herdquay:/bin/bash" >>/etc/passwd \
+COPY --from=fetch /usr/local/go /usr/local/go
+COPY --from=fetch /opt/node /opt/node
+COPY --from=fetch /opt/gh /opt/gh
+COPY --from=fetch \
+	/usr/local/bin/herdr \
+	/usr/local/bin/claude \
+	/usr/local/bin/golangci-lint \
+	/usr/local/bin/goreleaser \
+	/usr/local/bin/hadolint \
+	/usr/local/bin/yq \
+	/usr/local/bin/
+
+# Toolchain commands on the default PATH too, which non-login SSH commands use.
+RUN ln -s /usr/local/go/bin/go /usr/local/go/bin/gofmt /usr/local/bin/ \
+	&& ln -s /opt/node/bin/node /opt/node/bin/npm /opt/node/bin/npx /opt/node/bin/corepack /usr/local/bin/
+
+# Playwright's system libraries for Chromium, Firefox and WebKit, at the version the projects pin:
+# they need apt, so they cannot be installed at run time as the unprivileged user. The browsers
+# themselves are per project, in ~/.cache/ms-playwright (npx playwright install).
+ARG PLAYWRIGHT_VERSION=1.64.0
+RUN apt-get update \
+	&& npx -y "playwright@${PLAYWRIGHT_VERSION}" install-deps chromium firefox webkit \
+	&& rm -rf /var/lib/apt/lists/* /root/.npm /root/.cache
+
+# pre-commit, the hook runner every project uses, in its own virtualenv.
+ARG PRE_COMMIT_VERSION=4.6.2
+RUN python3 -m venv /opt/pre-commit \
+	&& /opt/pre-commit/bin/pip install --no-cache-dir "pre-commit==${PRE_COMMIT_VERSION}" \
+	&& ln -s /opt/pre-commit/bin/pre-commit /usr/local/bin/pre-commit
+
+# The image's stock `ubuntu` user (1000) goes: HerdQuay has exactly one account. Its password is
+# `*`, matching none, rather than useradd's locked `!`, which sshd would refuse even for a key. sshd
+# only accepts keys anyway, and the account has no sudo (the sudo package is not even installed).
+RUN userdel --remove ubuntu \
+	&& groupadd --gid "${HERDQUAY_GID}" herdquay \
+	&& useradd --uid "${HERDQUAY_UID}" --gid "${HERDQUAY_GID}" --comment HerdQuay \
+		--home-dir /home/herdquay --shell /bin/bash --no-create-home herdquay \
+	&& usermod --password '*' herdquay \
 	&& install -d -m 0755 -o "${HERDQUAY_UID}" -g "${HERDQUAY_GID}" /home/herdquay \
 	&& install -d -m 0755 -o "${HERDQUAY_UID}" -g "${HERDQUAY_GID}" /home/herdquay/workspace
 
-COPY --from=fetch /usr/local/bin/herdr /usr/local/bin/claude /usr/local/bin/
 COPY container/etc/ /etc/
 COPY container/bin/ /usr/local/bin/
 COPY container/share/ /usr/local/share/
+# npm's global prefix in the user's home, so `npm install -g` works without root.
+COPY container/npmrc /opt/node/etc/npmrc
+# The build context keeps the checkout's modes, which may be group-writable: ssh refuses such a
+# config file, and nothing in the image should be writable by anyone but root.
+# Only these paths: a chmod copies a file into a new layer, and /usr/local/bin also holds the big
+# binaries from the fetch stage.
+RUN chmod -R go-w /etc/ssh /etc/gitconfig /etc/profile.d/herdquay.sh /usr/local/share/herdquay \
+		/opt/node/etc/npmrc /usr/local/bin/gh /usr/local/bin/herdquay /usr/local/bin/herdquay-*
 
 ARG VERSION=dev
 ARG REVISION=unknown
@@ -127,6 +279,8 @@ ENV HOME=/home/herdquay \
 	USER=herdquay \
 	SHELL=/bin/bash \
 	LANG=C.UTF-8 \
+	PATH=/home/herdquay/.local/bin:/home/herdquay/go/bin:/usr/local/go/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+	GOTOOLCHAIN=auto \
 	DISABLE_AUTOUPDATER=1
 
 USER ${HERDQUAY_UID}:${HERDQUAY_GID}

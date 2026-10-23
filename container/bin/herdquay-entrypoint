@@ -94,12 +94,21 @@ install_authorized_keys() {
 }
 
 # Seeds the configuration once; a file the user already has is never overwritten, except that
-# Claude's settings gain remoteControlAtStartup when the key is absent.
+# Claude's settings gain remoteControlAtStartup when the key is absent. The Git identity comes from
+# HERDQUAY_GIT_NAME and HERDQUAY_GIT_EMAIL, and only when ~/.gitconfig has none yet.
 seed_config() {
 	local settings="${HOME}/.claude/settings.json" tmp
 	if [[ ! -e ${HERDR_DIR}/config.toml ]]; then
 		install -m 0600 "${SHARE_DIR}/herdr-config.toml" "${HERDR_DIR}/config.toml"
 		log "seeded ${HERDR_DIR}/config.toml"
+	fi
+	if [[ -n ${HERDQUAY_GIT_NAME:-} ]] && ! git config --global user.name >/dev/null; then
+		git config --global user.name "${HERDQUAY_GIT_NAME}"
+		log "set the Git user.name"
+	fi
+	if [[ -n ${HERDQUAY_GIT_EMAIL:-} ]] && ! git config --global user.email >/dev/null; then
+		git config --global user.email "${HERDQUAY_GIT_EMAIL}"
+		log "set the Git user.email"
 	fi
 	[[ -s ${settings} ]] || echo '{}' >"${settings}"
 	if ! jq -e 'has("remoteControlAtStartup")' "${settings}" >/dev/null; then

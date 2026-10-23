@@ -1,0 +1,13 @@
+# Adds the GitHub secrets to the local harness: HerdQuay's SSH key and the fine-grained token.
+# make compose-up includes this file when local/secrets/github_ssh_key and github_token exist.
+services:
+  herdquay:
+    secrets:
+      - github_ssh_key
+      - github_token
+
+secrets:
+  github_ssh_key:
+    file: ./local/secrets/github_ssh_key
+  github_token:
+    file: ./local/secrets/github_token

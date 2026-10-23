@@ -22,8 +22,10 @@ services:
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 30s
+    # exec: go test, Playwright and pre-commit run binaries from /tmp, and Docker mounts a tmpfs
+    # noexec by default. nosuid and nodev stay.
     tmpfs:
-      - /tmp
+      - /tmp:rw,exec,nosuid,nodev,mode=1777
 
 volumes:
   home:
