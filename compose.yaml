@@ -1,0 +1,34 @@
+# Local test harness for the HerdQuay image: not the homelab deployment. SSH is published on the
+# loopback interface only; secrets come from local/secrets/ (scripts/local-secrets.sh).
+name: herdquay
+
+services:
+  herdquay:
+    image: herdquay:local
+    volumes:
+      - home:/home/herdquay
+      - workspace:/home/herdquay/workspace
+    secrets:
+      - authorized_keys
+    environment:
+      HERDQUAY_STOP_TIMEOUT: "15"
+      HERDQUAY_AGENT_RESTORE: "${HERDQUAY_AGENT_RESTORE:-0}"
+    ports:
+      - '127.0.0.1:2222:2222'
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    hostname: herdquay
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    tmpfs:
+      - /tmp
+
+volumes:
+  home:
+  workspace:
+
+secrets:
+  authorized_keys:
+    file: ./local/secrets/authorized_keys

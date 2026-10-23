@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+#
+# MIT License
+#
+# Copyright (c) 2026 Roberto Leinardi
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# Checks, and optionally performs, the resumption of the previous run's Claude agents after a
+# container restart, with no client attached.
+#
+# Usage: herdquay-agents verify  <previous-session.json>
+#        herdquay-agents restore <previous-session.json>
+#
+# The argument is Herdr's session.json as it was before the server started.
+#
+# verify (the default, HERDQUAY_AGENT_RESTORE=0): Herdr's own native restore
+# ([session] resume_agents_on_restore) resumes the agents; with the headless server it does so
+# with no client attached (measured with Herdr 0.9.5, although its docs say it waits for a client).
+# After HERDQUAY_AGENT_VERIFY_DELAY seconds this lists every recorded Claude session that is not
+# live again, logs it and writes the result to ~/.local/state/herdquay/agents-status.json. It starts
+# nothing, so it cannot race Herdr.
+#
+# restore (the fallback, HERDQUAY_AGENT_RESTORE=1, with native restore turned off): resumes them
+# itself through Herdr's CLI. Every pane that ran a Claude agent is restored (a named one started
+# with herdr agent start, or a plain `claude` typed in a shell once its integration reported a
+# session; the latter gets a name derived from its directory): into the pane Herdr restored at the
+# same directory when there is one, otherwise into a new workspace there. A pane with a Claude
+# session id resumes it (claude --resume <id>); one without resumes the directory's latest
+# conversation (--continue). Agents pinned in ~/.config/herdquay/agents.json
+# ([{"name": "...", "cwd": "..."}]) are started fresh when no recorded agent has that name. An
+# agent that is already live is skipped, so a second run changes nothing.
+
+set -euo pipefail
+
+PINNED_FILE="${HOME}/.config/herdquay/agents.json"
+STATUS_FILE="${HOME}/.local/state/herdquay/agents-status.json"
+VERIFY_DELAY="${HERDQUAY_AGENT_VERIFY_DELAY:-120}"
+START_TIMEOUT_MS="${HERDQUAY_AGENT_START_TIMEOUT_MS:-120000}"
+
+log() {
+	printf '%s herdquay-agents: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2
+}
+
+usage() {
+	echo "Usage: herdquay-agents {verify|restore} <previous-session.json>" >&2
+	exit 2
+}
+
+# One JSON object per line: {name, cwd, label, session}; name is null for an unnamed agent.
+recorded_agents() {
+	local snapshot="$1"
+	[[ -s ${snapshot} ]] || return 0
+	jq -c '
+		.workspaces[]? as $w
+		| $w.tabs[]?.panes[]?
+		| select(.managed_agent_kind == "claude" or .agent_session.agent == "claude")
+		| {
+			name: (if (.agent_name // "") == "" then null else .agent_name end),
+			cwd: .cwd,
+			label: ($w.custom_name // .agent_name // (.cwd | split("/") | last)),
+			session: (
+				if .agent_session.agent == "claude" and .agent_session.kind == "id"
+				then .agent_session.value else null end
+			)
+		}
+	' "${snapshot}"
+}
+
+pinned_agents() {
+	[[ -s ${PINNED_FILE} ]] || return 0
+	jq -c '.[] | select((.name // "") != "" and (.cwd // "") != "")
+		| {name, cwd, label: (.label // .name), session: null, pinned: true}' "${PINNED_FILE}"
+}
+
+# A pane at the agent's directory that Herdr restored and that runs no agent.
+free_pane_at() {
+	local cwd="$1" busy
+	busy="$(herdr agent list | jq -c '[.result.agents[].pane_id]')"
+	herdr pane list | jq -r --arg cwd "${cwd}" --argjson busy "${busy}" '
+		[.result.panes[] | select(.cwd == $cwd and (.pane_id as $p | $busy | index($p) | not))]
+		| first | .pane_id // empty'
+}
+
+restore_one() {
+	local agent="$1" name cwd label session pinned pane
+	local -a args=()
+	name="$(jq -r .name <<<"${agent}")"
+	cwd="$(jq -r .cwd <<<"${agent}")"
+	label="$(jq -r .label <<<"${agent}")"
+	session="$(jq -r '.session // empty' <<<"${agent}")"
+	pinned="$(jq -r '.pinned // false' <<<"${agent}")"
+
+	if herdr agent get "${name}" >/dev/null 2>&1; then
+		log "${name}: already live, skipped"
+		return 0
+	fi
+	if [[ ! -d ${cwd} ]]; then
+		log "${name}: ${cwd} no longer exists, skipped"
+		return 0
+	fi
+
+	pane="$(free_pane_at "${cwd}")"
+	if [[ -z ${pane} ]]; then
+		pane="$(herdr workspace create --cwd "${cwd}" --label "${label}" --no-focus |
+			jq -r '.result.root_pane.pane_id')"
+	fi
+
+	if [[ -n ${session} ]]; then
+		args=(--resume "${session}")
+	elif [[ ${pinned} != true ]]; then
+		args=(--continue)
+	fi
+
+	if herdr agent start "${name}" --kind claude --pane "${pane}" --timeout "${START_TIMEOUT_MS}" \
+		-- "${args[@]}" >/dev/null; then
+		log "${name}: started in ${pane} (${cwd}) ${args[*]:-fresh}"
+	else
+		log "${name}: could not start in ${pane} (${cwd}): see herdr agent explain"
+		return 1
+	fi
+}
+
+# Herdr agent names match [a-z][a-z0-9_-]{0,31} and are unique among live agents.
+auto_name() {
+	local base="$1" candidate n=1
+	base="$(tr '[:upper:]' '[:lower:]' <<<"${base}" | tr -c 'a-z0-9_-' '-' | sed 's/^[^a-z]*//; s/-*$//')"
+	base="claude-${base:0:20}"
+	base="${base%-}"
+	candidate="${base}"
+	while [[ -n ${seen[${candidate}]:-} ]] || herdr agent get "${candidate}" >/dev/null 2>&1; do
+		n=$((n + 1))
+		candidate="${base}-${n}"
+	done
+	printf '%s' "${candidate}"
+}
+
+restore() {
+	local snapshot="$1" agent name failed=0
+	declare -A seen=()
+	while IFS= read -r agent; do
+		[[ -n ${agent} ]] || continue
+		name="$(jq -r '.name // empty' <<<"${agent}")"
+		if [[ -z ${name} ]]; then
+			name="$(auto_name "$(jq -r '.cwd | split("/") | last' <<<"${agent}")")"
+			agent="$(jq -c --arg name "${name}" '.name = $name' <<<"${agent}")"
+		fi
+		[[ -z ${seen[${name}]:-} ]] || continue
+		seen[${name}]=1
+		restore_one "${agent}" || failed=1
+	done < <(recorded_agents "${snapshot}"; pinned_agents)
+	if ((${#seen[@]} == 0)); then
+		log "no Claude agents to restore"
+	fi
+	return "${failed}"
+}
+
+# The session ids that have a transcript under Claude's config directory.
+transcript_ids() {
+	find "${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/projects" -mindepth 2 -maxdepth 2 -name '*.jsonl' \
+		-printf '%f\n' 2>/dev/null | sed 's/\.jsonl$//' | jq -Rsc 'split("\n") | map(select(. != ""))'
+}
+
+verify() {
+	local snapshot="$1" expected live missing tmp
+	# A conversation that never got a message has no transcript, and Claude cannot resume it.
+	expected="$(recorded_agents "${snapshot}" | jq -sc '[.[] | select(.session != null)]' |
+		jq -c --argjson transcripts "$(transcript_ids)" '[.[] | select(.session as $s | $transcripts | index($s))]')"
+	if [[ ${expected} == "[]" ]]; then
+		log "no recorded Claude sessions to verify"
+		missing="[]"
+	else
+		sleep "${VERIFY_DELAY}"
+		live="$(herdr agent list | jq -c '[.result.agents[].agent_session.value // empty]')"
+		missing="$(jq -c --argjson live "${live}" '[.[] | select(.session as $s | $live | index($s) | not)]' <<<"${expected}")"
+		if [[ ${missing} == "[]" ]]; then
+			log "all $(jq length <<<"${expected}") recorded Claude session(s) are live again"
+		else
+			log "warning: not resumed after ${VERIFY_DELAY}s: $(jq -r '[.[] | "\(.cwd) (\(.session))"] | join(", ")' <<<"${missing}")"
+			log "warning: resume them by hand (claude --resume <id>), or switch to HERDQUAY_AGENT_RESTORE=1"
+		fi
+	fi
+	mkdir -p "${STATUS_FILE%/*}"
+	tmp="$(mktemp "${STATUS_FILE}.XXXXXX")"
+	jq -n --argjson missing "${missing}" --arg checked "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		'{checked: $checked, missing: $missing}' >"${tmp}"
+	mv -f "${tmp}" "${STATUS_FILE}"
+	[[ ${missing} == "[]" ]]
+}
+
+case "${1:-}" in
+verify)
+	[[ $# -eq 2 ]] || usage
+	verify "$2"
+	;;
+restore)
+	[[ $# -eq 2 ]] || usage
+	restore "$2"
+	;;
+*)
+	usage
+	;;
+esac

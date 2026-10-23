@@ -64,7 +64,7 @@ HEADER_WINDOW=30
 # Governed file extensions (without the dot), and governed file names matched on the base name.
 # Repo-local .mk fragments are governed too; the make-common ones are exempt below.
 GOVERNED_EXTENSIONS=(sh bash)
-GOVERNED_NAMES=(Makefile Dockerfile "*.Dockerfile")
+GOVERNED_NAMES=(Makefile Dockerfile "*.Dockerfile" "herdquay-*")
 
 # Path prefixes and exact paths that are not this project's own code.
 EXEMPT_PREFIXES=()

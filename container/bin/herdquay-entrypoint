@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+#
+# MIT License
+#
+# Copyright (c) 2026 Roberto Leinardi
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# HerdQuay's entrypoint, run under tini as the unprivileged user. Prepares the persistent home,
+# then supervises two children, sshd and the headless Herdr server: when either exits on its own,
+# the other is stopped and the container exits non-zero so the orchestrator restarts it. A
+# requested stop (SIGTERM, SIGINT) stops both within HERDQUAY_STOP_TIMEOUT seconds and exits 0.
+# Herdr's native restore resumes the previous run's Claude agents; once Herdr answers,
+# herdquay-agents checks that it did, in the background and unsupervised (a miss is logged, never
+# fatal). HERDQUAY_AGENT_RESTORE=1 makes herdquay-agents resume them itself instead, the fallback
+# for a Herdr release whose headless restore stops working (turn native restore off with it).
+
+set -euo pipefail
+
+STOP_TIMEOUT="${HERDQUAY_STOP_TIMEOUT:-15}"
+AGENT_RESTORE="${HERDQUAY_AGENT_RESTORE:-0}"
+AUTHORIZED_KEYS_FILE="${HERDQUAY_AUTHORIZED_KEYS_FILE:-/run/secrets/authorized_keys}"
+STATE_DIR="${HOME}/.local/state/herdquay"
+HERDR_DIR="${HOME}/.config/herdr"
+SHARE_DIR=/usr/local/share/herdquay
+
+log() {
+	printf '%s herdquay: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2
+}
+
+die() {
+	log "error: $*"
+	exit 1
+}
+
+# A process that has exited but is not reaped yet is a zombie: kill -0 still succeeds on it.
+alive() {
+	local state
+	[[ -r /proc/$1/stat ]] || return 1
+	read -r _ _ state _ <"/proc/$1/stat" || return 1
+	[[ ${state} != Z ]]
+}
+
+prepare_home() {
+	umask 077
+	mkdir -p "${HOME}/.ssh/host" "${HERDR_DIR}" "${HOME}/.claude" "${HOME}/workspace" "${STATE_DIR}"
+	# sshd's StrictModes refuses a group- or world-writable home or ~/.ssh.
+	chmod go-w "${HOME}"
+	chmod 0700 "${HOME}/.ssh"
+}
+
+ensure_host_key() {
+	local key="${HOME}/.ssh/host/ssh_host_ed25519_key"
+	if [[ ! -s ${key} ]]; then
+		rm -f "${key}" "${key}.pub"
+		ssh-keygen -q -t ed25519 -N '' -C herdquay-host -f "${key}"
+		log "generated the SSH host key"
+	fi
+	log "SSH host key: $(ssh-keygen -l -f "${key}.pub")"
+}
+
+# authorized_keys is rebuilt from the secret on every start, so removing a key from the secret
+# revokes it at the next restart. Fails closed: no valid key, no start.
+install_authorized_keys() {
+	local tmp count
+	[[ -r ${AUTHORIZED_KEYS_FILE} ]] ||
+		die "no readable authorized keys file at ${AUTHORIZED_KEYS_FILE} (HERDQUAY_AUTHORIZED_KEYS_FILE)"
+	tmp="$(mktemp "${HOME}/.ssh/authorized_keys.XXXXXX")"
+	grep -Ev '^[[:space:]]*(#|$)' "${AUTHORIZED_KEYS_FILE}" >"${tmp}" || true
+	if [[ ! -s ${tmp} ]] || ! ssh-keygen -l -f "${tmp}" >/dev/null 2>&1; then
+		rm -f "${tmp}"
+		die "${AUTHORIZED_KEYS_FILE} holds no valid public key"
+	fi
+	chmod 0600 "${tmp}"
+	mv -f "${tmp}" "${HOME}/.ssh/authorized_keys"
+	count="$(wc -l <"${HOME}/.ssh/authorized_keys")"
+	log "authorized ${count} SSH key(s)"
+}
+
+# Seeds the configuration once; a file the user already has is never overwritten, except that
+# Claude's settings gain remoteControlAtStartup when the key is absent.
+seed_config() {
+	local settings="${HOME}/.claude/settings.json" tmp
+	if [[ ! -e ${HERDR_DIR}/config.toml ]]; then
+		install -m 0600 "${SHARE_DIR}/herdr-config.toml" "${HERDR_DIR}/config.toml"
+		log "seeded ${HERDR_DIR}/config.toml"
+	fi
+	[[ -s ${settings} ]] || echo '{}' >"${settings}"
+	if ! jq -e 'has("remoteControlAtStartup")' "${settings}" >/dev/null; then
+		tmp="$(mktemp "${settings}.XXXXXX")"
+		jq '.remoteControlAtStartup = true' "${settings}" >"${tmp}"
+		mv -f "${tmp}" "${settings}"
+		log "enabled Remote Control for every Claude session (${settings})"
+	fi
+}
+
+wait_for_herdr() {
+	local i
+	for ((i = 0; i < 60; i++)); do
+		if herdr status server 2>/dev/null | grep -q '^status: running'; then
+			return 0
+		fi
+		alive "${herdr_pid}" || return 1
+		sleep 0.5
+	done
+	return 1
+}
+
+stop_children() {
+	local deadline=$((SECONDS + STOP_TIMEOUT)) pid
+	log "stopping sshd and the Herdr server"
+	kill -TERM "${herdr_pid}" "${sshd_pid}" 2>/dev/null || true
+	while ((SECONDS < deadline)); do
+		alive "${herdr_pid}" || alive "${sshd_pid}" || break
+		sleep 0.2
+	done
+	for pid in "${herdr_pid}" "${sshd_pid}"; do
+		if alive "${pid}"; then
+			log "process ${pid} ignored SIGTERM for ${STOP_TIMEOUT}s: killing it"
+			kill -KILL "${pid}" 2>/dev/null || true
+		fi
+	done
+	wait "${herdr_pid}" "${sshd_pid}" 2>/dev/null || true
+}
+
+main() {
+	local stop_requested=0 failed=0 status
+
+	[[ $(id -u) -ne 0 ]] || die "refusing to run as root"
+	[[ ${STOP_TIMEOUT} =~ ^[0-9]+$ ]] || die "HERDQUAY_STOP_TIMEOUT must be a whole number of seconds"
+
+	prepare_home
+	ensure_host_key
+	install_authorized_keys
+	seed_config
+
+	# The layout of the previous run, read by herdquay-agents before the new server rewrites it.
+	if [[ -s ${HERDR_DIR}/session.json ]]; then
+		cp -f "${HERDR_DIR}/session.json" "${STATE_DIR}/previous-session.json"
+	else
+		rm -f "${STATE_DIR}/previous-session.json"
+	fi
+
+	trap 'stop_requested=1' TERM INT
+	# Caught, not ignored: an ignored signal stays ignored in every child, SSH session shells included.
+	trap ':' HUP
+
+	/usr/sbin/sshd -D -e -f /etc/ssh/sshd_config &
+	sshd_pid=$!
+	# A session leader of its own: Herdr only accepts a server that is one ("detached daemon") as a
+	# saved machine for desktop clients. setsid does not fork here (a background job is not a
+	# process group leader), so the pid stays the one supervised below.
+	(cd "${HOME}" && exec setsid herdr server) &
+	herdr_pid=$!
+	log "started sshd (pid ${sshd_pid}) and the Herdr server (pid ${herdr_pid})"
+
+	if wait_for_herdr; then
+		herdr integration install claude >/dev/null 2>&1 ||
+			log "warning: could not install the Herdr Claude integration"
+		if [[ ${AGENT_RESTORE} == 1 ]]; then
+			if grep -Eq '^[[:space:]]*resume_agents_on_restore[[:space:]]*=[[:space:]]*true' "${HERDR_DIR}/config.toml"; then
+				log "warning: HERDQUAY_AGENT_RESTORE=1 with Herdr's native restore on: the two can race; set resume_agents_on_restore = false"
+			fi
+			herdquay-agents restore "${STATE_DIR}/previous-session.json" &
+		else
+			herdquay-agents verify "${STATE_DIR}/previous-session.json" &
+		fi
+	else
+		log "error: the Herdr server did not come up"
+	fi
+
+	while :; do
+		status=0
+		wait -n "${sshd_pid}" "${herdr_pid}" || status=$?
+		if ((stop_requested)); then
+			break
+		fi
+		if ! alive "${sshd_pid}"; then
+			log "error: sshd exited (status ${status})"
+			failed=1
+			break
+		fi
+		if ! alive "${herdr_pid}"; then
+			log "error: the Herdr server exited (status ${status})"
+			failed=1
+			break
+		fi
+	done
+
+	stop_children
+	if ((failed)); then
+		exit 1
+	fi
+	log "stopped"
+	exit 0
+}
+
+main "$@"

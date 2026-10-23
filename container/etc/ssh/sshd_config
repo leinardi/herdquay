@@ -1,0 +1,35 @@
+# HerdQuay sshd, run by the unprivileged herdquay user (no root, no PAM), so it can only ever log
+# in that same user. Adapted from rozsival/devbox, MIT License, Copyright (c) 2026 Vít Rozsíval.
+# sshd_config expands no `~`: every path is absolute.
+
+Port 2222
+ListenAddress 0.0.0.0
+HostKey /home/herdquay/.ssh/host/ssh_host_ed25519_key
+PidFile none
+
+AuthorizedKeysFile /home/herdquay/.ssh/authorized_keys
+AllowUsers herdquay
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+PermitEmptyPasswords no
+UsePAM no
+StrictModes yes
+
+# Manual `ssh -A` sessions may forward an agent; Herdr never does.
+AllowAgentForwarding yes
+AllowTcpForwarding yes
+PermitTunnel no
+X11Forwarding no
+GatewayPorts no
+
+# Herdr multiplexes many channels over one connection.
+MaxSessions 32
+ClientAliveInterval 30
+ClientAliveCountMax 6
+
+AcceptEnv LANG LC_* TERM COLORTERM
+PrintMotd no
+LogLevel INFO
+Subsystem sftp internal-sftp

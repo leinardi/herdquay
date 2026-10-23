@@ -1,0 +1,9 @@
+# Seeded once into ~/.config/herdr/config.toml by herdquay-entrypoint; yours to edit afterwards
+# (herdr --default-config prints every option).
+
+[session]
+# Resume the Claude agents of the previous run after a restart. The headless server does this with
+# no client attached (measured with Herdr 0.9.5), so Remote Control is back without a desktop;
+# herdquay-agents verifies it. Turn this off only together with HERDQUAY_AGENT_RESTORE=1, which
+# makes herdquay-agents resume them instead: the two must not both run.
+resume_agents_on_restore = true
