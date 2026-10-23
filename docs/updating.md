@@ -1,9 +1,11 @@
 # Updating the image
 
-Every tool is pinned in the `Dockerfile` as an `ARG`, with what verifies it. Nothing updates
-itself at run time: Claude Code's and opencode's auto-updaters are off (`DISABLE_AUTOUPDATER=1`,
-`OPENCODE_DISABLE_AUTOUPDATE=1`) and Herdr is never installed into the home directory, so a
-running container only changes with a new image.
+Every tool is pinned in the `Dockerfile` as an `ARG`, with what verifies it. Claude Code is the one
+pin the image does not contain: `herdquay-claude-install` downloads and verifies it at the first
+start of an image that pins a new version. Nothing updates itself at run time: Claude Code's and
+opencode's auto-updaters are off (`DISABLE_AUTOUPDATER=1`, `OPENCODE_DISABLE_AUTOUPDATE=1`) and
+Herdr is never installed into the home directory, so a running container only changes with a new
+image.
 
 ## Routine
 
@@ -24,7 +26,7 @@ the same automated tests.
 | --- | --- | --- |
 | `BASE_IMAGE` (`ubuntu:26.04`) | Docker Official Image | tag only: each build takes the latest rebuild of the LTS release |
 | `HERDR_VERSION`, `HERDR_SHA256` | release asset digest (Herdr publishes no checksum file or signature) | `make check-updates` prints the digest |
-| `CLAUDE_VERSION` | GPG signature of the release manifest, then the binary's checksum in it | the stable channel, `https://downloads.claude.ai/claude-code-releases/stable` |
+| `CLAUDE_VERSION` | GPG signature of the release manifest, then the binary's checksum in it, both at first start | the stable channel, `https://downloads.claude.ai/claude-code-releases/stable` |
 | `CLAUDE_SIGNER_FINGERPRINT`, `container/keys/claude-code.asc` | pinned fingerprint | only when Anthropic rotates its release key: compare the new fingerprint with the [setup docs](https://code.claude.com/docs/en/setup) before replacing both |
 | `GO_VERSION`, `GO_SHA256` | SHA-256 | `https://go.dev/dl/?mode=json&include=all`; stay on the projects' minor line |
 | `NODE_VERSION`, `NODE_SHA256` | SHA-256 | the release's `SHASUMS256.txt`; stay on the 24 line until the projects move |

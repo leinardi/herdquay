@@ -26,15 +26,17 @@
 # then supervises two children, sshd and the headless Herdr server: when either exits on its own,
 # the other is stopped and the container exits non-zero so the orchestrator restarts it. A
 # requested stop (SIGTERM, SIGINT) stops both within HERDQUAY_STOP_TIMEOUT seconds and exits 0.
-# Herdr's native restore resumes the previous run's Claude agents; once Herdr answers,
-# herdquay-agents checks that it did, in the background and unsupervised (a miss is logged, never
-# fatal). HERDQUAY_AGENT_RESTORE=1 makes herdquay-agents resume them itself instead, the fallback
+# Claude Code itself is installed into the home volume first (herdquay-claude-install;
+# HERDQUAY_CLAUDE_INSTALL=0 skips it). Herdr's native restore resumes the previous run's Claude
+# agents; once Herdr answers, herdquay-agents checks that it did, in the background and
+# unsupervised (a miss is logged, never fatal). HERDQUAY_AGENT_RESTORE=1 makes herdquay-agents resume them itself instead, the fallback
 # for a Herdr release whose headless restore stops working (turn native restore off with it).
 
 set -euo pipefail
 
 STOP_TIMEOUT="${HERDQUAY_STOP_TIMEOUT:-15}"
 AGENT_RESTORE="${HERDQUAY_AGENT_RESTORE:-0}"
+CLAUDE_INSTALL="${HERDQUAY_CLAUDE_INSTALL:-1}"
 AUTHORIZED_KEYS_FILE="${HERDQUAY_AUTHORIZED_KEYS_FILE:-/run/secrets/authorized_keys}"
 STATE_DIR="${HOME}/.local/state/herdquay"
 HERDR_DIR="${HOME}/.config/herdr"
@@ -158,6 +160,12 @@ main() {
 	ensure_host_key
 	install_authorized_keys
 	seed_config
+	# Before the Herdr server starts: its native restore resumes the Claude panes right away. A
+	# failed install is not fatal (the next start retries, herdquay doctor reports it), so a
+	# network outage does not lock the owner out of SSH.
+	if [[ ${CLAUDE_INSTALL} == 1 ]]; then
+		herdquay-claude-install || log "warning: Claude Code is not installed; the next start retries"
+	fi
 
 	# The layout of the previous run, read by herdquay-agents before the new server rewrites it.
 	if [[ -s ${HERDR_DIR}/session.json ]]; then

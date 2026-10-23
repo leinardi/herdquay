@@ -23,10 +23,27 @@ How to run, connect to, check and recover a HerdQuay container. The local Compos
 | `HERDQUAY_GIT_NAME`, `HERDQUAY_GIT_EMAIL` | unset | Git identity, written to `~/.gitconfig` only when it has none |
 | `HERDQUAY_STOP_TIMEOUT` | `15` | seconds a child gets after SIGTERM before SIGKILL; keep it below the orchestrator's stop grace period (30 s in the harness) |
 | `HERDQUAY_AGENT_RESTORE` | `0` | `1` makes `herdquay-agents` resume the Claude agents itself (turn Herdr's native restore off with it) |
+| `HERDQUAY_CLAUDE_INSTALL` | `1` | `0` skips installing Claude Code at start (the tests use it on throwaway volumes) |
+| `HERDQUAY_CLAUDE_INSTALL_TIMEOUT` | `300` | seconds each Claude Code download may take |
 | `HERDQUAY_AGENT_VERIFY_DELAY` | `120` | seconds after start before `herdquay-agents verify` checks the resumed sessions |
 
 The SSH key for GitHub is always read from `/run/secrets/github_ssh_key`
 (`/etc/ssh/ssh_config.d/herdquay.conf`).
+
+### Claude Code at first start
+
+The image does not contain Claude Code: its license grants no right to redistribute it. Before
+sshd and Herdr start, `herdquay-claude-install` downloads the release the image pins (about
+290 MB), checks that its manifest is signed by Anthropic's release key and that the binary
+matches the manifest's checksum, and installs it as Anthropic's installer would:
+`~/.local/share/claude/versions/<version>`, linked from `~/.local/bin/claude`. The next starts
+only re-link it. A new image with another pin installs that one and removes the rest, and so
+does a restart after a manual `claude update`: the pin wins.
+
+If the download or a check fails, the container still starts, without Claude Code:
+`herdquay doctor` fails on it, and the next start tries again. The first start of a new pin needs
+outbound HTTPS to `downloads.claude.ai`; the healthcheck's start period (6 minutes) covers the
+download.
 
 ## Local harness
 
@@ -106,6 +123,7 @@ herdquay doctor --network  # also authenticates to GitHub over SSH and with the 
 | The host key changed unexpectedly | stop: a new key means the home volume was replaced. If intended, remove the old `known_hosts` entry and compare the new fingerprint from the logs |
 | Locked out (lost the authorized key) | update the authorized keys secret and restart; the file is rebuilt on every start |
 | Claude asks to log in again | `/login` in a pane; the credentials live in `~/.claude/.credentials.json` on the home volume |
+| Claude Code is missing or not the pinned version | the start log says why; restart, or run `herdquay-claude-install` in a shell |
 | A conversation did not come back | `herdquay doctor` names it; `claude --resume <id>` in its directory |
 | Herdr's native restore stops working after an upgrade | set `resume_agents_on_restore = false` in `~/.config/herdr/config.toml` and `HERDQUAY_AGENT_RESTORE=1` |
 | Start from scratch | remove the home volume: a new host key, a new Claude login and an empty Herdr layout |

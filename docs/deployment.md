@@ -15,14 +15,15 @@ own secret handling.
   Docker socket. Keep the image's user, 568:568 (`HERDQUAY_UID`/`HERDQUAY_GID` at build time).
 - `/tmp` as a tmpfs **with `exec`** (`nosuid,nodev` kept): Go tests, Playwright and pre-commit run
   binaries from it, and Docker mounts a tmpfs `noexec` by default.
-- The image has a `HEALTHCHECK` (sshd listening on 2222, the Herdr server answering) and logs to
+- The image has a `HEALTHCHECK` (sshd listening on 2222, the Herdr server answering), with a
+  6-minute start period that covers the first start's Claude Code download, and logs to
   stdout/stderr.
 
 ## Persistence
 
 | Mount | Content |
 | --- | --- |
-| `/home/herdquay` | Claude login and history (`~/.claude/`, `~/.claude.json`), opencode logins (`~/.local/share/opencode/`), Herdr state (`~/.config/herdr/`), the SSH host key (`~/.ssh/host/`), Git config, toolchain caches (`~/go`, `~/.cache`, `~/.npm`, Playwright browsers) |
+| `/home/herdquay` | Claude Code itself (`~/.local/share/claude/`, installed at first start), its login and history (`~/.claude/`, `~/.claude.json`), opencode logins (`~/.local/share/opencode/`), Herdr state (`~/.config/herdr/`), the SSH host key (`~/.ssh/host/`), Git config, toolchain caches (`~/go`, `~/.cache`, `~/.npm`, Playwright browsers) |
 | `/home/herdquay/workspace` | the repositories: a volume of its own, so it can have its own snapshot or backup policy |
 
 Both owned by 568:568. The home volume holds credentials (Claude, opencode, the host key): keep it
@@ -49,9 +50,9 @@ credential as an environment variable: `docker inspect` shows them.
 - Publish **only port 2222** (SSH), and only to the networks the desktop and phone-side admin
   clients connect from. HerdQuay needs no inbound HTTP and should have no reverse-proxy route or
   internet exposure.
-- Outbound HTTPS is required: Anthropic (Claude, Remote Control), GitHub (SSH 22 and HTTPS), the
-  Go module proxy, npm, PyPI, nodejs.org, Playwright's CDN, and the providers opencode is logged
-  in to.
+- Outbound HTTPS is required: Anthropic (Claude Code's download at first start, Claude, Remote
+  Control), GitHub (SSH 22 and HTTPS), the Go module proxy, npm, PyPI, nodejs.org, Playwright's CDN,
+  and the providers opencode is logged in to.
 - No Docker API network by default ([docker-diagnostics.md](docker-diagnostics.md)).
 
 ## Acceptance after deployment

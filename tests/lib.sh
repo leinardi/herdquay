@@ -78,12 +78,14 @@ start_container() {
 		-v "${HERDQUAY_SECRETS_DIR}/github_ssh_key:/run/secrets/github_ssh_key:ro" \
 		-v "${HERDQUAY_SECRETS_DIR}/github_token:/run/secrets/github_token:ro" \
 		-e HERDQUAY_STOP_TIMEOUT="${HERDQUAY_STOP_TIMEOUT:-5}" \
+		-e HERDQUAY_CLAUDE_INSTALL="${HERDQUAY_CLAUDE_INSTALL:-1}" \
 		"$@" "${IMAGE}" >/dev/null
 }
 
 wait_healthy() {
 	local name="$1" i status
-	for ((i = 0; i < 90; i++)); do
+	# Long enough for the first start's Claude Code download.
+	for ((i = 0; i < 180; i++)); do
 		status="$(docker inspect -f '{{.State.Health.Status}}' "${name}" 2>/dev/null || echo gone)"
 		[[ ${status} == healthy ]] && return 0
 		[[ ${status} == gone ]] && break

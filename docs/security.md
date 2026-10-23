@@ -58,15 +58,20 @@ reach, what protects the rest, and which risks are accepted on purpose.
   and the dataset's permissions. `/logout` and revoking the session in the claude.ai settings
   invalidate Claude's; `opencode auth logout` and revoking the key at the provider invalidate
   opencode's.
+- **Claude Code is writable by its user.** It lives in the home volume, owned by 568, so a process
+  running as 568 could replace it, which a root-owned binary in the image would prevent. That
+  process could already act as the user in every other way; the install is verified when it is
+  made, and a new pin or the removal of `~/.local/share/claude` reinstalls it.
 - **`/tmp` allows execution.** Toolchains (`go test`, Playwright, pre-commit) run binaries from
   `/tmp`, so its tmpfs is mounted `exec` (still `nosuid,nodev`).
 
 ## Supply chain
 
 The base is `ubuntu:26.04`, pinned by tag so the official image's security rebuilds are picked up.
-Every other download is pinned by version and verified before use: Claude Code against its
-GPG-signed release manifest (Anthropic's key vendored in `container/keys/`, its fingerprint pinned),
-the release binaries and toolchains against their published SHA-256 digests, opencode against npm's
+Every other download is pinned by version and verified before use: Claude Code, installed into
+the home volume at first start rather than shipped in the image, against its GPG-signed release
+manifest (Anthropic's key vendored in `container/keys/`, its fingerprint pinned in the image), the
+release binaries and toolchains against their published SHA-256 digests, opencode against npm's
 SHA-512 integrity, and the Docker CLI against Docker's apt key fingerprint. GitHub's SSH host keys
 are shipped in `/etc/ssh/ssh_known_hosts` and checked against GitHub's published fingerprints; a
 changed GitHub host key fails the connection instead of prompting. See [updating.md](updating.md).

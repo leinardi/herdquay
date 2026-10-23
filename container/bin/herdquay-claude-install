@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+#
+# MIT License
+#
+# Copyright (c) 2026 Roberto Leinardi
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# Installs the Claude Code release the image pins into the home volume, the way Anthropic's native
+# installer lays it out (~/.local/share/claude/versions/<version>, linked from ~/.local/bin/claude),
+# so the image itself carries no Anthropic binary. The release manifest must be signed by the
+# vendored release key with the pinned fingerprint, and the binary must match the manifest's
+# checksum. Idempotent: an installed pinned version is only re-linked, and every other version is
+# removed, so a manual `claude update` does not outlive a restart.
+#
+# Usage: herdquay-claude-install
+
+set -euo pipefail
+
+# The image's pin; the environment may override it (the tests do, to check a wrong signer).
+RELEASE_FILE=/usr/local/share/herdquay/claude-release
+VERSION="${HERDQUAY_CLAUDE_VERSION:-$(sed -n 's/^HERDQUAY_CLAUDE_VERSION=//p' "${RELEASE_FILE}")}"
+FINGERPRINT="${HERDQUAY_CLAUDE_SIGNER_FINGERPRINT:-$(sed -n 's/^HERDQUAY_CLAUDE_SIGNER_FINGERPRINT=//p' "${RELEASE_FILE}")}"
+KEY=/usr/local/share/herdquay/claude-code.asc
+BASE="https://downloads.claude.ai/claude-code-releases/${VERSION}"
+VERSIONS_DIR="${HOME}/.local/share/claude/versions"
+LINK="${HOME}/.local/bin/claude"
+TIMEOUT="${HERDQUAY_CLAUDE_INSTALL_TIMEOUT:-300}"
+
+log() {
+	printf '%s herdquay-claude-install: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2
+}
+
+die() {
+	log "error: $*"
+	exit 1
+}
+
+[[ ${VERSION} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "no Claude Code version pinned (${RELEASE_FILE})"
+[[ ${FINGERPRINT} =~ ^[0-9A-F]{40}$ ]] || die "no signer fingerprint pinned (${RELEASE_FILE})"
+[[ ${TIMEOUT} =~ ^[0-9]+$ ]] || die "HERDQUAY_CLAUDE_INSTALL_TIMEOUT must be a whole number of seconds"
+
+target="${VERSIONS_DIR}/${VERSION}"
+mkdir -p "${VERSIONS_DIR}" "${LINK%/*}"
+
+if [[ -x ${target} && ! -L ${target} ]]; then
+	log "Claude Code ${VERSION} already installed"
+else
+	work="$(mktemp -d)"
+	trap 'rm -rf "${work}"' EXIT
+	fetch() { curl -fsSL --retry 3 --max-time "${TIMEOUT}" -o "$1" "$2"; }
+
+	fetch "${work}/manifest.json" "${BASE}/manifest.json" || die "could not download the ${VERSION} manifest"
+	fetch "${work}/manifest.json.sig" "${BASE}/manifest.json.sig" || die "could not download the manifest signature"
+	export GNUPGHOME="${work}/gnupg"
+	mkdir -m 0700 "${GNUPGHOME}"
+	gpg --batch --quiet --import "${KEY}" 2>/dev/null || die "could not import ${KEY}"
+	gpg --batch --status-fd 1 --verify "${work}/manifest.json.sig" "${work}/manifest.json" 2>/dev/null |
+		grep -q "^\[GNUPG:\] VALIDSIG ${FINGERPRINT} " ||
+		die "the ${VERSION} manifest is not signed by ${FINGERPRINT}"
+	[[ $(jq -r .version "${work}/manifest.json") == "${VERSION}" ]] ||
+		die "the signed manifest is for another version"
+	checksum="$(jq -r '.platforms["linux-x64"].checksum // empty' "${work}/manifest.json")"
+	[[ ${checksum} =~ ^[0-9a-f]{64}$ ]] || die "the signed manifest has no linux-x64 checksum"
+
+	log "downloading Claude Code ${VERSION}"
+	fetch "${work}/claude" "${BASE}/linux-x64/claude" || die "could not download Claude Code ${VERSION}"
+	echo "${checksum}  ${work}/claude" | sha256sum --check --quiet --strict - ||
+		die "Claude Code ${VERSION} does not match the signed checksum"
+	chmod 0755 "${work}/claude"
+	# Same filesystem as the target, so the final rename is atomic: a partial file never shows up
+	# as the installed version.
+	tmp="$(mktemp "${VERSIONS_DIR}/.${VERSION}.XXXXXX")"
+	cat "${work}/claude" >"${tmp}"
+	chmod 0755 "${tmp}"
+	mv -f "${tmp}" "${target}"
+	log "installed Claude Code ${VERSION} (signature ${FINGERPRINT}, sha256 ${checksum})"
+fi
+
+ln -sfn "${target}" "${LINK}"
+find "${VERSIONS_DIR}" -mindepth 1 -maxdepth 1 ! -name "${VERSION}" -exec rm -rf {} +

@@ -14,7 +14,7 @@ from devbox and credits it in its header; nothing else is copied.
 | herdr in `/usr/local/bin`, pinned, checked against the release asset digest | same | **adopted**: Herdr's background SSH only uses a binary already on the PATH |
 | Host key on the persistent home, generated once | same | **adopted** |
 | `authorized_keys` rebuilt on start from `github.com/<user>.keys` | rebuilt on start from a secret file, fail closed | **adapted**: no network fetch at start, the deployment controls the list |
-| Claude Code installed at run time by `install.sh`, self-updating | pinned in the image, manifest GPG signature and checksum verified at build, auto-update off | **adapted**: reproducible, and `install.sh` does not check the signature |
+| Claude Code installed at run time by `install.sh`, self-updating | installed at run time too, into the same layout, but at the version the image pins, its manifest's GPG signature and checksum verified; auto-update off | **adapted**: not redistributed in the image, still reproducible, and `install.sh` does not check the signature |
 | Launcher that unsets `ANTHROPIC_API_KEY` | not needed: no API key is ever passed in | **simplified**: Remote Control requires the claude.ai login anyway |
 | No Remote Control configuration | `remoteControlAtStartup: true` seeded, Herdr's native restore on, `herdquay-agents verify` | **added**: the phone must reach the same live conversations, also after a restart |
 | Per-identity Git config, GitHub App tokens, `gh` shim per directory | one identity: a dedicated SSH key and a fine-grained token, both secret files; a `gh` wrapper that reads the token per process | **simplified** |

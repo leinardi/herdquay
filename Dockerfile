@@ -49,25 +49,6 @@ RUN curl -fsSL -o /tmp/herdr \
 	&& echo "${HERDR_SHA256}  /tmp/herdr" | sha256sum --check --strict - \
 	&& install -D -m 0755 /tmp/herdr /usr/local/bin/herdr
 
-# Claude Code: the release manifest is signed by Anthropic's release key (vendored in
-# container/keys, its fingerprint pinned here), and the manifest carries the binary's checksum.
-# install.sh checks the checksum but not the signature, so both are checked here instead.
-ARG CLAUDE_VERSION=2.1.308
-ARG CLAUDE_SIGNER_FINGERPRINT=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
-COPY container/keys/claude-code.asc /tmp/claude-code.asc
-RUN base="https://downloads.claude.ai/claude-code-releases/${CLAUDE_VERSION}" \
-	&& curl -fsSL -o /tmp/manifest.json "${base}/manifest.json" \
-	&& curl -fsSL -o /tmp/manifest.json.sig "${base}/manifest.json.sig" \
-	&& GNUPGHOME="$(mktemp -d)" && export GNUPGHOME \
-	&& gpg --batch --quiet --import /tmp/claude-code.asc \
-	&& gpg --batch --status-fd 1 --verify /tmp/manifest.json.sig /tmp/manifest.json \
-		| grep -q "^\[GNUPG:\] VALIDSIG ${CLAUDE_SIGNER_FINGERPRINT} " \
-	&& test "$(jq -r .version /tmp/manifest.json)" = "${CLAUDE_VERSION}" \
-	&& checksum="$(jq -r '.platforms["linux-x64"].checksum' /tmp/manifest.json)" \
-	&& curl -fsSL -o /tmp/claude "${base}/linux-x64/claude" \
-	&& echo "${checksum}  /tmp/claude" | sha256sum --check --strict - \
-	&& install -D -m 0755 /tmp/claude /usr/local/bin/claude
-
 # Go, one toolchain for every project: their go.mod lines are minimums (1.26.x), and
 # GOTOOLCHAIN=auto fetches a newer one for a module that asks for it. Digest from go.dev/dl JSON.
 ARG GO_VERSION=1.26.10
@@ -229,7 +210,6 @@ COPY --from=fetch /opt/node /opt/node
 COPY --from=fetch /opt/gh /opt/gh
 COPY --from=fetch \
 	/usr/local/bin/herdr \
-	/usr/local/bin/claude \
 	/usr/local/bin/opencode \
 	/usr/local/bin/golangci-lint \
 	/usr/local/bin/goreleaser \
@@ -269,6 +249,10 @@ RUN userdel --remove ubuntu \
 COPY container/etc/ /etc/
 COPY container/bin/ /usr/local/bin/
 COPY container/share/ /usr/local/share/
+# Claude Code is not in the image: herdquay-claude-install puts the pinned release into the home
+# volume at start (its license grants no right to redistribute it), verified against this
+# key, whose fingerprint is pinned below.
+COPY container/keys/claude-code.asc /usr/local/share/herdquay/claude-code.asc
 # npm's global prefix in the user's home, so `npm install -g` works without root.
 COPY container/npmrc /opt/node/etc/npmrc
 # The build context keeps the checkout's modes, which may be group-writable: ssh refuses such a
@@ -277,6 +261,13 @@ COPY container/npmrc /opt/node/etc/npmrc
 # binaries from the fetch stage.
 RUN chmod -R go-w /etc/ssh /etc/gitconfig /etc/profile.d/herdquay.sh /usr/local/share/herdquay \
 		/opt/node/etc/npmrc /usr/local/bin/gh /usr/local/bin/herdquay /usr/local/bin/herdquay-*
+
+# The Claude Code release to install and the fingerprint its manifest must be signed with, in a
+# file rather than ENV so that SSH sessions (herdquay doctor) read the same pin.
+ARG CLAUDE_VERSION=2.1.308
+ARG CLAUDE_SIGNER_FINGERPRINT=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
+RUN printf 'HERDQUAY_CLAUDE_VERSION=%s\nHERDQUAY_CLAUDE_SIGNER_FINGERPRINT=%s\n' \
+		"${CLAUDE_VERSION}" "${CLAUDE_SIGNER_FINGERPRINT}" >/usr/local/share/herdquay/claude-release
 
 ARG VERSION=dev
 ARG REVISION=unknown
@@ -303,7 +294,7 @@ WORKDIR /home/herdquay
 
 EXPOSE 2222
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=6m --retries=3 \
 	CMD ["/usr/local/bin/herdquay-healthcheck"]
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/herdquay-entrypoint"]

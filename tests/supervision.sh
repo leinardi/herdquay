@@ -33,6 +33,8 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
 export HERDQUAY_STOP_TIMEOUT=5
+# Every case starts on a fresh home volume: the smoke test covers the Claude Code install.
+export HERDQUAY_CLAUDE_INSTALL=0
 
 # wait_exit <name> <seconds>: prints the exit code once the container has stopped.
 wait_exit() {

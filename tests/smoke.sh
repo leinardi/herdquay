@@ -90,4 +90,18 @@ wait_healthy "${TEST_ID}-2"
 in_ssh "${TEST_ID}-2" 'test -s ~/.claude.json && test -s ~/.config/herdr/config.toml' || die "configuration did not persist"
 pass "recreation keeps the host key, home, workspace and configuration"
 
+pinned="$(docker exec "${TEST_ID}-2" sed -n 's/^HERDQUAY_CLAUDE_VERSION=//p' /usr/local/share/herdquay/claude-release)"
+[[ $(in_ssh "${TEST_ID}-2" 'readlink -f ~/.local/bin/claude') == "/home/herdquay/.local/share/claude/versions/${pinned}" ]] ||
+	die "the claude link is not the pinned ${pinned}"
+in_ssh "${TEST_ID}-2" 'claude --version' | grep -qF "${pinned}" || die "claude --version is not ${pinned}"
+docker logs "${TEST_ID}-2" 2>&1 | grep -q "Claude Code ${pinned} already installed" ||
+	die "the recreated container downloaded Claude Code again"
+docker run --rm --entrypoint bash "${IMAGE}" -c 'test ! -e /usr/local/bin/claude && ! command -v claude' >/dev/null ||
+	die "the image itself ships a claude binary"
+if docker run --rm --entrypoint herdquay-claude-install \
+	-e HERDQUAY_CLAUDE_SIGNER_FINGERPRINT=0000000000000000000000000000000000000000 "${IMAGE}" >/dev/null 2>&1; then
+	die "herdquay-claude-install accepted a manifest signed by an unexpected key"
+fi
+pass "Claude Code ${pinned}: installed at first start, verified, kept across recreation, not in the image"
+
 echo "smoke: all checks passed"

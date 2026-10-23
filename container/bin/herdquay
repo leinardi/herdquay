@@ -73,7 +73,7 @@ check_secret() {
 }
 
 doctor() {
-	local network=0 status integrations
+	local network=0 status integrations pinned
 	[[ ${1:-} == --network ]] && network=1
 
 	section "Identity"
@@ -139,6 +139,12 @@ doctor() {
 	check_tool ssh ssh -V
 	check_tool herdr herdr --version
 	check_tool claude claude --version
+	pinned="$(sed -n 's/^HERDQUAY_CLAUDE_VERSION=//p' /usr/local/share/herdquay/claude-release)"
+	if [[ -n ${pinned} && $(readlink -f "${HOME}/.local/bin/claude" 2>/dev/null) == "${HOME}/.local/share/claude/versions/${pinned}" ]]; then
+		ok "Claude Code is the pinned ${pinned}"
+	else
+		fail "Claude Code is not the pinned ${pinned:-version} (restart, or run herdquay-claude-install)"
+	fi
 	check_tool opencode opencode --version
 	check_tool go go version
 	check_tool node node --version
