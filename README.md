@@ -1,8 +1,9 @@
 # HerdQuay
 
 A persistent, remotely accessible AI coding environment for a homelab: one container that runs a
-[Herdr](https://herdr.dev) server, [Claude Code](https://code.claude.com), an unprivileged SSH
-server, Git, the GitHub CLI and the toolchains needed to work on the owner's projects.
+[Herdr](https://herdr.dev) server, [Claude Code](https://code.claude.com),
+[opencode](https://opencode.ai), an unprivileged SSH server, Git, the GitHub CLI and the
+toolchains needed to work on the owner's projects.
 
 - **Desktop (Linux, macOS):** the local Herdr client attaches to the container's Herdr server over
   SSH, with the full interactive Claude Code terminal UI.

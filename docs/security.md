@@ -23,6 +23,7 @@ reach, what protects the rest, and which risks are accepted on purpose.
 | GitHub SSH private key | `/run/secrets/github_ssh_key` | UID 568 |
 | GitHub fine-grained token | `/run/secrets/github_token` | UID 568 |
 | Claude login | `~/.claude/.credentials.json` (0600) on the home volume | UID 568 |
+| opencode provider logins | `~/.local/share/opencode/auth.json` on the home volume | UID 568 |
 | SSH host key | `~/.ssh/host/` (0600) on the home volume | UID 568 |
 
 - None of them is in the image, a build argument, a label or Git, and none is passed as an
@@ -52,18 +53,20 @@ reach, what protects the rest, and which risks are accepted on purpose.
   including code Claude runs and project scripts it executes. This is inherent to an agent that
   can push. Keep the token fine-grained (selected repositories, only the permissions needed:
   contents, pull requests, issues, actions, workflows).
-- **Claude credentials at rest.** `~/.claude/.credentials.json` is plaintext on the home volume,
-  protected by its mode and the dataset's permissions. `/logout` and revoking the session in the
-  claude.ai settings invalidate it.
+- **Agent credentials at rest.** `~/.claude/.credentials.json` and opencode's
+  `~/.local/share/opencode/auth.json` are plaintext on the home volume, protected by their mode
+  and the dataset's permissions. `/logout` and revoking the session in the claude.ai settings
+  invalidate Claude's; `opencode auth logout` and revoking the key at the provider invalidate
+  opencode's.
 - **`/tmp` allows execution.** Toolchains (`go test`, Playwright, pre-commit) run binaries from
   `/tmp`, so its tmpfs is mounted `exec` (still `nosuid,nodev`).
 
 ## Supply chain
 
-The base is `ubuntu:26.04`, pinned by tag so the official image's security rebuilds are picked
-up. Every other download is pinned by version and verified before use: Claude Code
-against its GPG-signed release manifest (Anthropic's key vendored in `container/keys/`, its
-fingerprint pinned), the release binaries and toolchains against their published SHA-256 digests,
-and the Docker CLI against Docker's apt key fingerprint. GitHub's SSH host keys are shipped in
-`/etc/ssh/ssh_known_hosts` and checked against GitHub's published fingerprints; a changed GitHub
-host key fails the connection instead of prompting. See [updating.md](updating.md).
+The base is `ubuntu:26.04`, pinned by tag so the official image's security rebuilds are picked up.
+Every other download is pinned by version and verified before use: Claude Code against its
+GPG-signed release manifest (Anthropic's key vendored in `container/keys/`, its fingerprint pinned),
+the release binaries and toolchains against their published SHA-256 digests, opencode against npm's
+SHA-512 integrity, and the Docker CLI against Docker's apt key fingerprint. GitHub's SSH host keys
+are shipped in `/etc/ssh/ssh_known_hosts` and checked against GitHub's published fingerprints; a
+changed GitHub host key fails the connection instead of prompting. See [updating.md](updating.md).

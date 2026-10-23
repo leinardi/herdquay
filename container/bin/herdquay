@@ -73,7 +73,7 @@ check_secret() {
 }
 
 doctor() {
-	local network=0 status
+	local network=0 status integrations
 	[[ ${1:-} == --network ]] && network=1
 
 	section "Identity"
@@ -95,10 +95,16 @@ doctor() {
 	else
 		fail "Herdr server not running"
 	fi
-	if herdr integration status 2>/dev/null | grep -q '^claude: current'; then
+	integrations="$(herdr integration status 2>/dev/null || true)"
+	if grep -q '^claude: current' <<<"${integrations}"; then
 		ok "Herdr Claude integration current"
 	else
 		warn "Herdr Claude integration not current (herdr integration install claude)"
+	fi
+	if grep -q '^opencode: current' <<<"${integrations}"; then
+		ok "Herdr opencode integration current"
+	else
+		warn "Herdr opencode integration not current (herdr integration install opencode)"
 	fi
 	if jq -e '.remoteControlAtStartup == true' "${HOME}/.claude/settings.json" >/dev/null 2>&1; then
 		ok "Remote Control enabled for every Claude session"
@@ -133,6 +139,7 @@ doctor() {
 	check_tool ssh ssh -V
 	check_tool herdr herdr --version
 	check_tool claude claude --version
+	check_tool opencode opencode --version
 	check_tool go go version
 	check_tool node node --version
 	check_tool npm npm --version

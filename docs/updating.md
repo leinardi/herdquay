@@ -1,8 +1,9 @@
 # Updating the image
 
 Every tool is pinned in the `Dockerfile` as an `ARG`, with what verifies it. Nothing updates
-itself at run time: Claude Code's auto-updater is off (`DISABLE_AUTOUPDATER=1`) and Herdr is never
-installed into the home directory, so a running container only changes with a new image.
+itself at run time: Claude Code's and opencode's auto-updaters are off (`DISABLE_AUTOUPDATER=1`,
+`OPENCODE_DISABLE_AUTOUPDATE=1`) and Herdr is never installed into the home directory, so a
+running container only changes with a new image.
 
 ## Routine
 
@@ -28,6 +29,7 @@ the same automated tests.
 | `GO_VERSION`, `GO_SHA256` | SHA-256 | `https://go.dev/dl/?mode=json&include=all`; stay on the projects' minor line |
 | `NODE_VERSION`, `NODE_SHA256` | SHA-256 | the release's `SHASUMS256.txt`; stay on the 24 line until the projects move |
 | `GH_VERSION`, `YQ_VERSION` (+ `_SHA256`) | release asset digest | `make check-updates` |
+| `OPENCODE_VERSION`, `OPENCODE_INTEGRITY` | npm's SHA-512 integrity of `@opencode/cli-linux-x64` (no build provenance) | `make check-updates`, from the package's `latest` tag. opencode 2 is only on npm: the GitHub releases of `anomalyco/opencode` are opencode 1 |
 | `GOLANGCI_LINT_VERSION`, `GORELEASER_VERSION`, `HADOLINT_VERSION` (+ `_SHA256`) | release asset digest | bump together with the projects that pin them (pre-commit revs, monmux's release workflow); hadolint also in `.pre-commit-config.yaml` and `.github/actions/setup-hadolint` |
 | `DOCKER_CLI_VERSION`, `DOCKER_BUILDX_VERSION`, `DOCKER_COMPOSE_VERSION` | Docker's apt signature, key fingerprint `DOCKER_SIGNER_FINGERPRINT` | `make check-updates` reads Docker's Ubuntu `resolute` `Packages` index |
 | `PLAYWRIGHT_VERSION` | npm | bump together with `@playwright/test` in bitgauge and runhold |

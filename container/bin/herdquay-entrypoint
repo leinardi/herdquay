@@ -59,7 +59,7 @@ alive() {
 
 prepare_home() {
 	umask 077
-	mkdir -p "${HOME}/.ssh/host" "${HERDR_DIR}" "${HOME}/.claude" "${HOME}/workspace" "${STATE_DIR}"
+	mkdir -p "${HOME}/.ssh/host" "${HERDR_DIR}" "${HOME}/.claude" "${HOME}/.config/opencode" "${HOME}/workspace" "${STATE_DIR}"
 	# sshd's StrictModes refuses a group- or world-writable home or ~/.ssh.
 	chmod go-w "${HOME}"
 	chmod 0700 "${HOME}/.ssh"
@@ -149,7 +149,7 @@ stop_children() {
 }
 
 main() {
-	local stop_requested=0 failed=0 status
+	local stop_requested=0 failed=0 status agent
 
 	[[ $(id -u) -ne 0 ]] || die "refusing to run as root"
 	[[ ${STOP_TIMEOUT} =~ ^[0-9]+$ ]] || die "HERDQUAY_STOP_TIMEOUT must be a whole number of seconds"
@@ -180,8 +180,10 @@ main() {
 	log "started sshd (pid ${sshd_pid}) and the Herdr server (pid ${herdr_pid})"
 
 	if wait_for_herdr; then
-		herdr integration install claude >/dev/null 2>&1 ||
-			log "warning: could not install the Herdr Claude integration"
+		for agent in claude opencode; do
+			herdr integration install "${agent}" >/dev/null 2>&1 ||
+				log "warning: could not install the Herdr ${agent} integration"
+		done
 		if [[ ${AGENT_RESTORE} == 1 ]]; then
 			if grep -Eq '^[[:space:]]*resume_agents_on_restore[[:space:]]*=[[:space:]]*true' "${HERDR_DIR}/config.toml"; then
 				log "warning: HERDQUAY_AGENT_RESTORE=1 with Herdr's native restore on: the two can race; set resume_agents_on_restore = false"

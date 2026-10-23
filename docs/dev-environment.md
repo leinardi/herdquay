@@ -27,7 +27,10 @@ Playwright browsers), cached in the home volume.
 No toolchain manager: one Go and one Node cover all five projects today, and a manager would be
 one more moving part. Revisit if two projects need different lines at once.
 
-Also in the image, the CLI tools an agent or a GitHub runner usually has: `gh`, `jq`, `yq`,
+Next to Claude Code, the image has opencode 2.1.4, with its auto-update off
+(`OPENCODE_DISABLE_AUTOUPDATE=1`).
+
+It also has the CLI tools an agent or a GitHub runner usually has: `gh`, `jq`, `yq`,
 `rg`, `fd`, `tree`, `wget`, `zip`/`unzip`/`xz`/`zstd`, `rsync`, `file`, `bc`, `gawk`, `sqlite3`,
 `dig`, `nc`, `ping`, `lsof`, `htop`, `strace`, `openssl`, `gpg`, `git-lfs`, `vim`, `nano`,
 `patch`.

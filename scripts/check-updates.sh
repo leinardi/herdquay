@@ -96,6 +96,9 @@ report "node ${node_line}" "$(pinned NODE_VERSION)" "${node_latest}" \
 report pre-commit "$(pinned PRE_COMMIT_VERSION)" \
 	"$(curl -fsSL https://pypi.org/pypi/pre-commit/json 2>/dev/null | jq -r '.info.version // empty')" \
 	"keep it in step with the projects' CI pin"
+opencode="$(curl -fsSL https://registry.npmjs.org/@opencode%2fcli-linux-x64/latest 2>/dev/null || true)"
+report opencode "$(pinned OPENCODE_VERSION)" "$(jq -r '.version // empty' <<<"${opencode}" 2>/dev/null)" \
+	"OPENCODE_INTEGRITY=$(jq -r '.dist.integrity // empty' <<<"${opencode}" 2>/dev/null); npm, not GitHub (that is opencode 1)"
 report playwright "$(pinned PLAYWRIGHT_VERSION)" \
 	"$(curl -fsSL https://registry.npmjs.org/playwright/latest 2>/dev/null | jq -r '.version // empty')" \
 	"bump only when bitgauge and runhold bump @playwright/test"

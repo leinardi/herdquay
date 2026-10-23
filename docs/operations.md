@@ -71,6 +71,11 @@ explains why and checks it).
 Every interactive Claude session starts with Remote Control on (`remoteControlAtStartup: true`,
 seeded into `~/.claude/settings.json`), so the conversation shows up in the Claude app.
 
+opencode is there too: run `opencode` in a pane and `opencode auth login` once per provider.
+The entrypoint installs Herdr's opencode integration, so Herdr shows its state like Claude's.
+Remote Control is Claude's alone, so opencode is desktop only, and `herdquay-agents` checks and
+resumes only Claude conversations.
+
 ## Disconnects and restarts
 
 | Event | What happens |

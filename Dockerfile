@@ -125,6 +125,19 @@ RUN fetch() { curl -fsSL -o "$1" "$2" && echo "$3  $1" | sha256sum --check --str
 	&& chmod 0755 /usr/local/bin/hadolint /usr/local/bin/yq \
 	&& rm -rf /tmp/*
 
+# opencode 2 ships only on npm, as one package per platform (what https://opencode.ai/v2/install
+# downloads). Checked against the registry's SHA-512 integrity for that version:
+# npm view @opencode/cli-linux-x64@<version> dist.integrity (docs/updating.md).
+ARG OPENCODE_VERSION=2.1.4
+ARG OPENCODE_INTEGRITY=sha512-o8EJ0ZsT4dzDKN+0mpG2EKbNGzJyp+F1++Av28UReRVfiEv+N34eZEnN/unkiMoerKHad6W6Ii7k4ukTnPNmNQ==
+RUN curl -fsSL -o /tmp/opencode.tgz \
+	"https://registry.npmjs.org/@opencode/cli-linux-x64/-/cli-linux-x64-${OPENCODE_VERSION}.tgz" \
+	&& echo "$(base64 -d <<<"${OPENCODE_INTEGRITY#sha512-}" | od -An -v -tx1 | tr -d ' \n')  /tmp/opencode.tgz" \
+		| sha512sum --check --strict - \
+	&& tar -xzf /tmp/opencode.tgz -C /tmp package/bin/opencode \
+	&& install -D -m 0755 /tmp/package/bin/opencode /usr/local/bin/opencode \
+	&& rm -rf /tmp/opencode.tgz /tmp/package
+
 # Docker's apt signing key, asserted to be the one Docker documents (primary key fingerprint).
 ARG DOCKER_SIGNER_FINGERPRINT=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
 RUN curl -fsSL -o /tmp/docker.asc https://download.docker.com/linux/ubuntu/gpg \
@@ -217,6 +230,7 @@ COPY --from=fetch /opt/gh /opt/gh
 COPY --from=fetch \
 	/usr/local/bin/herdr \
 	/usr/local/bin/claude \
+	/usr/local/bin/opencode \
 	/usr/local/bin/golangci-lint \
 	/usr/local/bin/goreleaser \
 	/usr/local/bin/hadolint \
@@ -281,7 +295,8 @@ ENV HOME=/home/herdquay \
 	LANG=C.UTF-8 \
 	PATH=/home/herdquay/.local/bin:/home/herdquay/go/bin:/usr/local/go/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
 	GOTOOLCHAIN=auto \
-	DISABLE_AUTOUPDATER=1
+	DISABLE_AUTOUPDATER=1 \
+	OPENCODE_DISABLE_AUTOUPDATE=1
 
 USER ${HERDQUAY_UID}:${HERDQUAY_GID}
 WORKDIR /home/herdquay

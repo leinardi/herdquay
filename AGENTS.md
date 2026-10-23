@@ -4,8 +4,8 @@
 
 HerdQuay: a Docker image for a persistent, remotely accessible AI coding environment in the owner's
 homelab. One container runs an unprivileged sshd, a headless Herdr server, Claude Code (with
-Remote Control on its interactive sessions), Git, the GitHub CLI and the toolchains of the owner's
-projects. [`README.md`](README.md) is the user-facing contract.
+Remote Control on its interactive sessions), opencode, Git, the GitHub CLI and the toolchains of
+the owner's projects. [`README.md`](README.md) is the user-facing contract.
 
 Scope of this repository: the image, its local Compose harness, its tests and its docs. Deploying
 it (Ansible, Docker Swarm, TrueNAS datasets, pfSense rules) lives in the separate `homelab`
