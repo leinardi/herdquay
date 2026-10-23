@@ -29,6 +29,10 @@ venv/
 .tmp/
 tmp/
 
+# The local Compose harness's secrets and state: SSH keys, the GitHub token, authorized_keys.
+# Never committed.
+local/
+
 # Claude Code: the shared settings and the skills symlink are tracked; local settings
 # (settings.local.json) and session state never are.
 .claude/*

@@ -1,52 +1,57 @@
 #!/usr/bin/env bash
 #
-# License header checker, off until the repository picks a license.
+# MIT License
 #
-# Once enabled, it fails on any tracked code file whose first lines do not carry the project's
-# license notice and copyright line, so a missing header is caught as surely as one copied from
-# another project. YAML, JSON and Markdown are never governed: they are configuration and
-# documentation, not code files in this sense.
+# Copyright (c) 2026 Roberto Leinardi
 #
-# The template ships no LICENSE, so nothing runs this yet. To enable it (AGENTS.md, "License
-# headers"):
-#   1. add the LICENSE and fill in the configuration block below;
-#   2. add the header to every file the script lists, this one included, with the year each file
-#      was first committed;
-#   3. wire the check-license-headers hook into .pre-commit-config.yaml.
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
 #
-# Exempt by default: the make-common files the bootstrap fetches (they carry make-common's own MIT
-# header; read from the Makefile's MK_COMMON_FILES) and scripts/bootstrap-mk-common.sh, which comes
-# from make-common too. Add generated and vendored files to the exemptions, each for a reason.
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# License header checker.
+#
+# Fails on any tracked code file whose first lines do not carry the herdquay MIT notice and
+# copyright line, so a missing header is caught as surely as one copied from another project. YAML,
+# JSON and Markdown are never governed: they are configuration and documentation, not code files in
+# this sense.
+#
+# Exempt: the make-common files the bootstrap fetches (they carry make-common's own MIT header;
+# read from the Makefile's MK_COMMON_FILES) and scripts/bootstrap-mk-common.sh, which comes from
+# make-common too. Add generated and vendored files to the exemptions, each for a reason.
 
 set -euo pipefail
 
 # --- Configuration -------------------------------------------------------------------------------
 
 # Named in the messages, and in a GPL notice's "This file is part of ..." line.
-PROJECT_NAME="template-default"
+PROJECT_NAME="herdquay"
 
 # The copyright holder, as the copyright line names it.
 COPYRIGHT_HOLDER="Roberto Leinardi"
 
 # The license, as the messages name it.
-LICENSE_NAME=""
+LICENSE_NAME="MIT"
 
-# Lines the header must contain, verbatim. Empty means "not configured", and the check refuses to
-# run rather than pass on nothing. Copy one preset, or write your own:
-#
-#   MIT:
-#     "MIT License"
-#     "Permission is hereby granted, free of charge, to any person obtaining a copy"
-#     "THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR"
-#   Apache-2.0:
-#     "Licensed under the Apache License, Version 2.0 (the \"License\");"
-#     "you may not use this file except in compliance with the License."
-#   GPL-3.0-or-later:
-#     "This file is part of ${PROJECT_NAME}."
-#     "it under the terms of the GNU General Public License as published by"
-#     "the Free Software Foundation, either version 3 of the License, or"
-#     "(at your option) any later version."
-REQUIRED_LINES=()
+# Lines the header must contain, verbatim.
+REQUIRED_LINES=(
+	"MIT License"
+	"Permission is hereby granted, free of charge, to any person obtaining a copy"
+	"THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR"
+)
 
 # The copyright line: the year (or years) and the holder, on one line. Matches both
 # "Copyright (c) 2026 Name" (MIT, GPL) and "Copyright 2026 Name." (Apache-2.0). An extended regex,
@@ -58,7 +63,7 @@ HEADER_WINDOW=30
 
 # Governed file extensions (without the dot), and governed file names matched on the base name.
 # Repo-local .mk fragments are governed too; the make-common ones are exempt below.
-GOVERNED_EXTENSIONS=(sh bash py go ts tsx mts cts js mjs cjs vue rs rb tf lua)
+GOVERNED_EXTENSIONS=(sh bash)
 GOVERNED_NAMES=(Makefile Dockerfile "*.Dockerfile")
 
 # Path prefixes and exact paths that are not this project's own code.

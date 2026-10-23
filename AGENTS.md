@@ -2,10 +2,14 @@
 
 ## What this is
 
-The default template for `leinardi/*` repositories: the shared scaffolding (Makefile, pre-commit
-hooks, CI, release, GitHub settings files, docs, skills) with no language or stack yet. Repositories
-created from it copy these files once; a change here reaches only the repositories created
-afterwards, so a fix that existing repositories need is ported to them separately.
+HerdQuay: a Docker image for a persistent, remotely accessible AI coding environment in the owner's
+homelab. One container runs an unprivileged sshd, a headless Herdr server, Claude Code (with
+Remote Control on its interactive sessions), Git, the GitHub CLI and the toolchains of the owner's
+projects. [`README.md`](README.md) is the user-facing contract.
+
+Scope of this repository: the image, its local Compose harness, its tests and its docs. Deploying
+it (Ansible, Docker Swarm, TrueNAS datasets, pfSense rules) lives in the separate `homelab`
+repository and is never changed from here.
 
 ## Common commands
 
@@ -18,8 +22,11 @@ make help                # lists every target
 ```
 
 Before calling a change done, run `make check`: checkmake, actionlint, markdownlint, shellcheck,
-prettier and yamllint. In CI, `ci-result` is the one required check: it needs `pre-commit-all` and
-`conventional-commits` (`ci.yaml`); the reviewdog jobs only annotate pull requests.
+prettier, yamllint, dclint, hadolint and the license headers. hadolint's hook runs the system
+binary, so it must be installed locally, at the release `.github/actions/setup-hadolint` pins (CI
+installs it with that action). In CI, `ci-result` is the one required check: it needs
+`pre-commit-all` and `conventional-commits` (`ci.yaml`); the reviewdog jobs only annotate pull
+requests.
 
 The Makefile pulls shared snippets from `leinardi/make-common@v1` into `.mk/` on first run. Project
 targets live in the local `.mk/*.mk` files listed in `MK_LOCAL_FILES`, never as recipes in the
@@ -31,9 +38,10 @@ Makefile.
 | --- | --- |
 | `Makefile`, `.mk/`, `scripts/bootstrap-mk-common.sh` | make-common: shared snippets in `MK_COMMON_FILES`, local ones in `MK_LOCAL_FILES` |
 | `.github/workflows/ci.yaml` | `pre-commit-all`, `conventional-commits` and the `ci-result` aggregator; the reviewdog jobs on pull requests |
-| `.github/workflows/release.yaml` | the **Release** workflow, on gh-reusable-workflows' `simple-tag-and-release` |
+| `.github/actions/setup-hadolint/` | installs the pinned, digest-verified hadolint binary the hook runs |
 | `.github/workflows/pre-commit-warmup.yaml` | refreshes the pre-commit cache on `main` (hook config change, weekly) and prunes the older entries |
-| `scripts/check-license-headers.sh` | the license-header check, off until the repository has a license ([License headers](#license-headers)) |
+| `scripts/check-license-headers.sh` | the MIT license-header check, an always-run pre-commit hook ([License headers](#license-headers)) |
+| `.hadolint.yaml`, `.dclintrc`, `.dockerignore` | Dockerfile and Compose lint rules, and the build context's exclusions |
 | `.agents/skills/` | project skills; `.claude/skills` is a symlink to it |
 
 ### Generated or vendored: never hand-edit
@@ -54,41 +62,24 @@ Makefile.
   tool installed in `pre-commit-all`; a hook that a dedicated job runs instead is listed in
   `pre-commit-all`'s `SKIP`, with the job named in a comment.
 - `README.md` is the user-facing contract: keep it in step with what the repository does.
+- **No secret ever enters the image or Git**: no SSH key, token, Claude credential or
+  `authorized_keys`, not even in a test or an example. They reach the container as secret files
+  at run time; the local harness keeps its copies in the ignored `local/` directory.
+- **No Docker socket, and never the homelab's read-write Docker API proxy.** Optional read-only
+  diagnostics are a separate, opt-in deployment decision.
+- Every tool the image downloads is pinned and verified (checksum or signature) in the
+  Dockerfile; the base image is pinned by digest.
 
 ## License headers
 
-The template has no `LICENSE`, so nothing checks headers here. `scripts/check-license-headers.sh`
-is ready for the repository that picks one; until it is configured it refuses to run. To enable it:
-
-1. Add the `LICENSE`, and fill in the configuration block at the top of the script:
-   `PROJECT_NAME`, `COPYRIGHT_HOLDER`, `LICENSE_NAME` and `REQUIRED_LINES` (presets for MIT,
-   Apache-2.0 and GPL-3.0-or-later are in its comments). Trim `GOVERNED_EXTENSIONS` and
-   `GOVERNED_NAMES` to the stack if needed, and exempt generated and vendored files in
-   `EXEMPT_PREFIXES` or `EXEMPT_PATHS`, each for a reason.
-2. Add the header to every file the script lists, the script itself included (after the shebang),
-   with the year the file was first committed:
-   `git log --diff-filter=A --follow --format=%ad --date=format:%Y -- <file> | tail -1`. An
-   IntelliJ copyright profile in `.idea/copyright/` (which `.gitignore` tracks) keeps new files
-   right.
-3. Wire the hook into the `local` repo of `.pre-commit-config.yaml`. It reads the whole tree, so it
-   always runs; `stages` pins it to one stage, because `always_run` makes a hook eligible at every
-   installed stage, and `commit-msg` is one of them:
-
-   ```yaml
-   - id: check-license-headers
-     name: license headers
-     entry: scripts/check-license-headers.sh
-     language: system
-     pass_filenames: false
-     always_run: true
-     stages: [pre-commit]
-   ```
-
-4. Rewrite this section to say what the check enforces, and its validation matrix row to run it.
-
-Governed by default: code (shell, Python, Go, TypeScript, JavaScript, Vue, Rust, Ruby, Terraform,
-Lua, Dockerfiles, the Makefile and the repo-local `.mk` fragments). Never YAML, JSON or Markdown.
-The make-common files are exempt: they carry make-common's own header.
+Every code file carries the MIT header, with the year the file was first committed:
+`git log --diff-filter=A --follow --format=%ad --date=format:%Y -- <file> | tail -1`. Governed:
+shell scripts, Dockerfiles, the Makefile and the repo-local `.mk` fragments; never YAML, JSON or
+Markdown. `scripts/check-license-headers.sh`, an always-run pre-commit hook, fails on a governed
+file without it. The make-common files and `scripts/bootstrap-mk-common.sh` carry make-common's own
+header and are exempt. Copy the header from any governed file; the IntelliJ copyright profile in
+`.idea/copyright/` (MIT) adds it to new files. A file adapted from rozsival/devbox (MIT) also keeps
+devbox's copyright line.
 
 ## Markdown
 
@@ -125,8 +116,11 @@ it is a performance improvement, a refactor or a revert. Use `perf`, `refactor`,
 `revert` only when the commit is deliberately not meant to trigger a release on its own. A `revert`
 of a shipped `feat` or `fix` is itself a `fix`. `svu` matches `feat`/`fix` anywhere in the subject
 (e.g. `prefix:` counts as `fix:`), so avoid a word ending in `feat` or `fix` directly before a colon
-in other subjects. PRs land as merge commits, so every commit counts, not just the PR title. See
-[`CONTRIBUTING.md`](CONTRIBUTING.md#releasing).
+in other subjects. PRs land as merge commits, so every commit counts, not just the PR title.
+
+There is no release workflow yet: image publishing arrives with the deployment phase, and these
+rules apply from its first release, which needs an explicit version (there is no tag to derive it
+from).
 
 ## Validation matrix
 
@@ -138,7 +132,9 @@ Run before considering an edit done. `make check` applies to every row.
 | `.pre-commit-config.yaml` | `make check`; a hook that needs a system tool also gets it in `ci.yaml`'s `pre-commit-all` |
 | `Makefile`, the `.mk/*.mk` files in `MK_LOCAL_FILES` | `make check` (checkmake), `make help` |
 | `scripts/bootstrap-mk-common.sh`, the make-common `.mk` files | never by hand: port the change to make-common, then `make mk-common-update` and `make help` |
-| `scripts/check-license-headers.sh` | `make check` (shellcheck); once configured, run it, and see a file without the header fail it |
+| `scripts/check-license-headers.sh` | `make check` (shellcheck and the hook itself); strip one governed file's header and confirm the check names it |
+| `Dockerfile`, `.hadolint.yaml` | `make check` (hadolint, with the binary installed locally) |
+| `compose*.yaml`, `.dclintrc` | `make check` (dclint) |
 | `**/*.md`, `.agents/skills/**` | `make check` (markdownlint); prose wrapped at 100 columns |
 
 ## Project skills

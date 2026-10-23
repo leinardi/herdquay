@@ -1,16 +1,17 @@
 ---
 name: adversarial-review
 description: >
-  Adversarial code review of a set of changes to template-default, the default leinardi/*
-  repository template — working tree, staged diff, a branch vs main, a commit range, or a PR.
-  Hunts for workflow permission and injection problems, unpinned actions, shell recipes that
-  break on unusual input, commit types that ship the wrong release, and docs that no longer
-  match the code, then reports ranked findings. Use when the user asks to review changes/a
+  Adversarial code review of a set of changes to herdquay, the persistent Herdr + Claude Code
+  dev-environment image — working tree, staged diff, a branch vs main, a commit range, or a PR.
+  Hunts for secrets reaching the image or Git, root or extra privileges at run time, unpinned or
+  unverified downloads, workflow permission and injection problems, shell that breaks on unusual
+  input, commit types that ship the wrong release, and docs that no longer match the code, then
+  reports ranked findings. Use when the user asks to review changes/a
   diff/a PR/a branch, "check my work before committing", "is this ready to merge", or "poke
   holes in this".
 ---
 
-# Adversarial Review — template-default
+# Adversarial Review — herdquay
 
 You are a hostile reviewer. Assume the change is **wrong until proven right**. Find the input,
 state or event where it breaks. A review that finds nothing is only credible after you tried to
@@ -78,6 +79,22 @@ user-facing contract a change must keep true.
 - New targets live in a local `.mk/*.mk` listed in `MK_LOCAL_FILES`, never in the Makefile; a
   fetched `.mk` file edited by hand is lost on the next `make mk-common-update`.
 
+### Image and container
+
+- No secret in the image, its build args, its labels, the build context or Git: SSH keys, tokens,
+  Claude credentials, `authorized_keys`. They arrive as secret files at run time. A secret in a
+  layer, an `ENV`, a `docker inspect`-visible environment variable or a committed fixture is
+  **critical**.
+- Nothing runs as root at run time; the final `USER` is the unprivileged user (568). A new
+  capability, setuid binary, `sudo`, privileged mode, host mount or Docker socket is **high** at
+  least, and the homelab's read-write Docker API proxy is never wired in.
+- The base is pinned by digest; every downloaded artifact is pinned by version and verified by
+  checksum or signature before use. `curl | sh` of an unpinned script is a finding.
+- sshd keeps keys-only auth and host-key verification stays on in the client config; Git uses
+  `StrictHostKeyChecking yes`.
+- Supervision: a dead child stops the container, a stop is bounded, and signals reach every
+  child.
+
 ### Commits and releases
 
 - Every commit is `type(scope): subject`. The type decides the release (pass in §4).
@@ -87,8 +104,8 @@ user-facing contract a change must keep true.
 - **Correctness:** a default that changes what an existing user gets.
 - **Empty and edge input:** unset optional inputs, a repository with no tags, an empty list, a
   first run, a re-run after a partial failure.
-- **Contract drift:** README, `AGENTS.md`, `CONTRIBUTING.md` and the PR template still describe
-  what the repository does.
+- **Contract drift:** README, `AGENTS.md`, `SECURITY.md`, the docs and the PR template still
+  describe what the repository does.
 - **Commit type matches whether it ships:** `svu` derives the release from the commits since the
   last tag, and every commit lands as it is (merge commits). A change users should receive typed
   `chore`, `ci`, `docs`, `refactor` or `perf` never ships; a `feat` or `fix` on CI, tests or docs
@@ -110,7 +127,8 @@ it, report it; if not, dig once more, then drop it. No named input and wrong res
 | --- | --- |
 | anything | `make check` |
 | a workflow | `make check` (actionlint), then reason through each trigger it has: pull request, push, dispatch, schedule |
-| `scripts/check-license-headers.sh` | the script, once as is and once on a file without the header (configure it first in a scratch copy if the repository has none) |
+| `scripts/check-license-headers.sh` | the script, once as is and once on a file without the header |
+| `Dockerfile`, `container/**` | `make check` (hadolint), then the image build and its smoke and supervision tests |
 
 Say which gates you could not run rather than implying they passed.
 
