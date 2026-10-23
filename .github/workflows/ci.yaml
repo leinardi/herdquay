@@ -203,14 +203,104 @@ jobs:
           from-ref: ${{ github.event.pull_request.base.sha }}
           to-ref: ${{ github.event.pull_request.head.sha }}
 
+  # Decides whether the image job runs: only when something that goes into the image or its tests
+  # changed, since a build costs minutes on a private repository. A manual dispatch, and a push
+  # whose "before" commit is unknown (a new branch, a force-push), always build.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      image: ${{ steps.diff.outputs.image }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: List the changed paths
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          image_paths='^(Dockerfile|\.dockerignore|compose[^/]*\.ya?ml|Makefile|\.hadolint\.yaml|\.github/workflows/ci\.yaml)$|^(container|tests|scripts|\.mk|\.github/actions)/'
+          case "${EVENT}" in
+            pull_request) base="${PR_BASE}" head="${PR_HEAD}" ;;
+            push) base="${PUSH_BEFORE}" head="${PUSH_AFTER}" ;;
+            *) base="" head="" ;;
+          esac
+          if [[ -z ${base} || ${base} =~ ^0+$ ]] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "No comparable base (${EVENT}): building the image."
+            echo "image=true" >>"${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          changed="$(git diff --name-only "${base}" "${head}")"
+          if grep -Eq "${image_paths}" <<<"${changed}"; then
+            echo "image=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "No image input changed: the image job is skipped."
+            echo "image=false" >>"${GITHUB_OUTPUT}"
+          fi
+
+  # Builds the image and runs its automated tests: the smoke test (SSH, doctor, GitHub client
+  # configuration, secrets, persistence) and the supervision test (child death, bounded stop).
+  # Every input is public (ubuntu:26.04 and the pinned downloads), so the job needs no secret.
+  image:
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build the image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          push: false
+          tags: herdquay:ci
+          build-args: |
+            VERSION=ci
+            REVISION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The tests provision their secrets with POSIX ACLs (scripts/local-secrets.sh).
+      - name: Install the ACL tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends acl
+
+      - name: Smoke test
+        env:
+          HERDQUAY_IMAGE: herdquay:ci
+        run: tests/smoke.sh
+
+      - name: Supervision test
+        env:
+          HERDQUAY_IMAGE: herdquay:ci
+        run: tests/supervision.sh
+
   # The single required check: green only when every gating job succeeded. conventional-commits
-  # only runs on pull requests, so it may be skipped on a push or a dispatch. A repository that adds
-  # a gating job (tests, build, audit) adds it to needs.
+  # only runs on pull requests, so it may be skipped on a push or a dispatch. image may be skipped
+  # only when changes succeeded and said no image input changed; any other skip, failure or
+  # cancellation fails the gate. A repository that adds a gating job adds it to needs.
   ci-result:
     if: always()
     needs:
       - pre-commit-all
       - conventional-commits
+      - changes
+      - image
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -221,7 +311,7 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          failed="$(jq -r --arg event "${EVENT}" '
+          failed="$(jq -r --arg event "${EVENT}" --argjson needs "${NEEDS}" '
             to_entries[]
             | select(.value.result != "success")
             | select(
@@ -229,6 +319,14 @@ jobs:
                   $event != "pull_request"
                   and .key == "conventional-commits"
                   and .value.result == "skipped"
+                ) | not
+              )
+            | select(
+                (
+                  .key == "image"
+                  and .value.result == "skipped"
+                  and $needs.changes.result == "success"
+                  and $needs.changes.outputs.image == "false"
                 ) | not
               )
             | "\(.key): \(.value.result)"
