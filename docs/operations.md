@@ -1,8 +1,8 @@
 # Operations
 
 How to run, connect to, check and recover a HerdQuay container. The local Compose harness
-(`compose.yaml`) is the reference; the homelab deployment must provide the same interface
-([deployment-requirements.md](deployment-requirements.md)).
+(`compose.yaml`) is the reference; a deployment must provide the same interface
+([deployment.md](deployment.md)).
 
 ## Interface
 

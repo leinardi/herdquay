@@ -12,7 +12,7 @@ reach, what protects the rest, and which risks are accepted on purpose.
   installed but has no daemon ([docker-diagnostics.md](docker-diagnostics.md)).
 - **SSH**: keys only, one user, the authorized keys rebuilt from a secret on every start (removing
   a key from the secret revokes it at the next restart). No published web port. Network reach is
-  for the deployment to restrict ([deployment-requirements.md](deployment-requirements.md)).
+  for the deployment to restrict ([deployment.md](deployment.md)).
 - **Remote Control** uses outbound HTTPS to Anthropic; nothing listens for it.
 
 ## Secrets

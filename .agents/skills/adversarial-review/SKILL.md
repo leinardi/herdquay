@@ -87,9 +87,9 @@ user-facing contract a change must keep true.
   **critical**.
 - Nothing runs as root at run time; the final `USER` is the unprivileged user (568). A new
   capability, setuid binary, `sudo`, privileged mode, host mount or Docker socket is **high** at
-  least, and the homelab's read-write Docker API proxy is never wired in.
-- The base is pinned by digest; every downloaded artifact is pinned by version and verified by
-  checksum or signature before use. `curl | sh` of an unpinned script is a finding.
+  least, and a read-write Docker API proxy is never wired in.
+- The base is pinned by tag (`ubuntu:26.04`); every downloaded artifact is pinned by version and
+  verified by checksum or signature before use. `curl | sh` of an unpinned script is a finding.
 - sshd keeps keys-only auth and host-key verification stays on in the client config; Git uses
   `StrictHostKeyChecking yes`.
 - Supervision: a dead child stops the container, a stop is bounded, and signals reach every

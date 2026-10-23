@@ -8,8 +8,9 @@ Remote Control on its interactive sessions), opencode, Git, the GitHub CLI and t
 the owner's projects. [`README.md`](README.md) is the user-facing contract.
 
 Scope of this repository: the image, its local Compose harness, its tests and its docs. Deploying
-it (Ansible, Docker Swarm, TrueNAS datasets, pfSense rules) lives in the separate `homelab`
-repository and is never changed from here.
+it to the owner's homelab (Ansible, Docker Swarm, TrueNAS datasets, pfSense rules) lives in the
+separate, private `homelab` repository, with its homelab-specific requirements, and is never changed
+from here; `docs/deployment.md` is the generic contract.
 
 ## Common commands
 
@@ -51,7 +52,7 @@ Makefile.
 | `compose.yaml`, `compose.github.yaml` | the local test harness (SSH on loopback), and its optional GitHub secrets |
 | `scripts/local-secrets.sh`, `scripts/check-updates.sh` | the harness's ACL-provisioned secrets; the report of pins with newer releases |
 | `tests/` | `smoke.sh` and `supervision.sh` (CI), `projects.sh` (manual, the five projects' workflows), `lib.sh` |
-| `docs/` | operations, security, dev environment, updating, Docker access, deployment requirements, devbox comparison; `herdr-api.schema.json` (Herdr's API at the pinned version) |
+| `docs/` | operations, security, dev environment, updating, Docker access, deployment, devbox comparison; `herdr-api.schema.json` (Herdr's API at the pinned version) |
 | `.github/actions/setup-shellcheck/` | installs the pinned, digest-verified ShellCheck binary droast's bridge runs |
 | `.github/workflows/pre-commit-warmup.yaml` | refreshes the pre-commit cache on `main` (hook config change, weekly) and prunes the older entries |
 | `scripts/check-license-headers.sh` | the MIT license-header check, an always-run pre-commit hook ([License headers](#license-headers)) |
@@ -79,10 +80,10 @@ Makefile.
 - **No secret ever enters the image or Git**: no SSH key, token, Claude credential or
   `authorized_keys`, not even in a test or an example. They reach the container as secret files
   at run time; the local harness keeps its copies in the ignored `local/` directory.
-- **No Docker socket, and never the homelab's read-write Docker API proxy.** Optional read-only
+- **No Docker socket, and never a read-write Docker API proxy.** Optional read-only
   diagnostics are a separate, opt-in deployment decision.
 - Every tool the image downloads is pinned and verified (checksum or signature) in the
-  Dockerfile; the base image is pinned by digest.
+  Dockerfile; the base image is pinned by tag (`ubuntu:26.04`, see `docs/updating.md`).
 
 ## License headers
 

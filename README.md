@@ -17,9 +17,8 @@ toolchains needed to work on the owner's projects.
 
 The image works and is tested locally: desktop attach over SSH, Remote Control from the phone,
 sessions that survive a client disconnect and resume after a container restart with no client
-attached, and the toolchains of the owner's projects. Nothing is published yet, and deploying it
-to the homelab is a separate, later step
-([deployment requirements](docs/deployment-requirements.md)).
+attached, and the toolchains of the owner's projects. Nothing is published yet
+([deployment](docs/deployment.md) lists what a deployment must provide).
 
 ## Quick start (local)
 
@@ -40,8 +39,7 @@ Then connect with Herdr and log in to Claude: [docs/operations.md](docs/operatio
   chosen from, what does not run inside.
 - [Updating](docs/updating.md): every pin, how to bump it.
 - [Docker access](docs/docker-diagnostics.md): why there is no Docker API, and the options.
-- [Deployment requirements](docs/deployment-requirements.md): what the homelab deployment must
-  provide.
+- [Deployment](docs/deployment.md): what any deployment must provide.
 - [Comparison with rozsival/devbox](docs/devbox-comparison.md).
 
 ## Design principles

@@ -7,28 +7,24 @@ three separate decisions, none of them taken in this phase.
 
 ## 1. Read-only diagnostics (designed, not wired)
 
-Goal: let Claude read the state of the homelab's containers and services while debugging, never
-change it.
+Goal: let Claude read the state of the host's containers and services while debugging, never
+change it. The usual tool is a Docker socket proxy in front of the daemon, and a GET-only proxy
+is less read-only than it looks:
 
-What the homelab already has, and why it is not enough as is (`homelab/roles/
-truenas_docker_socket_proxy/files/swarm-compose.yaml`):
-
-- The `ro` proxy (Tecnativa docker-socket-proxy) allows `CONTAINERS, EVENTS, IMAGES, INFO,
-  NETWORKS, NODES, PING, SERVICES, TASKS, VERSION` with `POST=0`, so it is GET-only.
-- **Its `LOGS=0` has no effect.** Tecnativa's `haproxy.cfg` has no `LOGS` switch: `CONTAINERS=1`
-  allows every path under `/containers`, including `GET /containers/{id}/logs` and
-  `GET /containers/{id}/json`, which shows a container's environment variables. `SERVICES=1` does
-  the same for `/services/{id}/logs` and service specs.
+- **Tecnativa's docker-socket-proxy has no `LOGS` switch.** Its `haproxy.cfg` gates paths by
+  section, so `CONTAINERS=1` allows every path under `/containers`, including
+  `GET /containers/{id}/logs` and `GET /containers/{id}/json`, which shows a container's
+  environment variables. `SERVICES=1` does the same for `/services/{id}/logs` and service specs.
+  Setting `LOGS=0` changes nothing.
 - A GET-only API therefore still exposes logs, environment variables (secrets passed that way
   included), labels, mount paths, service configurations and network topology.
-- The `docker_api_ro` network is `internal` and `attachable: false`, and shared by Traefik,
-  Homepage, Prometheus and Portracker. Attaching HerdQuay there would give it that whole
-  surface.
+- A proxy network that other services already share gives HerdQuay that whole surface, and
+  everything those services can reach.
 
-Recommended design for the deployment phase:
+Recommended design:
 
-1. A **dedicated proxy instance** for HerdQuay, on its own internal overlay network that only
-   HerdQuay and that proxy join.
+1. A **dedicated proxy instance** for HerdQuay, on its own internal network that only HerdQuay
+   and that proxy join.
 2. Only the endpoints the diagnostics need, decided explicitly: `PING`, `VERSION`, `INFO`,
    `SERVICES`, `TASKS`, `NODES`, and `CONTAINERS` only if container inspection or logs are wanted
    (accepting that it includes `/json` and `/logs`). `POST=0`, and everything else off.
@@ -36,8 +32,8 @@ Recommended design for the deployment phase:
 4. Before enabling it, check that no service passes secrets through environment variables or
    labels, since the proxy would show them.
 
-**Never** connect HerdQuay to the `writer` (read-write) proxy, and never fall back to it if the
-read-only one lacks an endpoint.
+**Never** connect HerdQuay to a read-write proxy, and never fall back to one if the read-only
+proxy lacks an endpoint.
 
 ## 2. Docker CLI and Compose without an API
 
@@ -54,10 +50,10 @@ bitgauge network harness.
 
 If they are wanted inside HerdQuay later, the options, in order of isolation:
 
-- **A remote builder off TrueNAS** (a dedicated VM or machine running a rootless BuildKit or
-  Docker daemon, reached over TLS): no new privilege on the NAS. The best fit.
+- **A remote builder off the host** (a dedicated VM or machine running a rootless BuildKit or
+  Docker daemon, reached over TLS): no new privilege on the host. The best fit.
 - **A rootless sibling daemon** for HerdQuay alone (as rozsival/devbox does): its own data root,
-  no access to the Swarm's daemon, but it still needs relaxed seccomp/AppArmor and user
+  no access to the host's daemon, but it still needs relaxed seccomp/AppArmor and user
   namespaces on the host.
-- **Never**: the host socket, the read-write proxy, or a privileged DinD container on TrueNAS.
-  Each is administrative control of the NAS and the Swarm.
+- **Never**: the host socket, a read-write proxy, or a privileged DinD container on the host.
+  Each is administrative control of the host and everything it runs.
