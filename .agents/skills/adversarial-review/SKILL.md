@@ -128,7 +128,7 @@ it, report it; if not, dig once more, then drop it. No named input and wrong res
 | anything | `make check` |
 | a workflow | `make check` (actionlint), then reason through each trigger it has: pull request, push, dispatch, schedule |
 | `scripts/check-license-headers.sh` | the script, once as is and once on a file without the header |
-| `Dockerfile`, `container/**` | `make check` (hadolint), then the image build and its smoke and supervision tests |
+| `Dockerfile`, `container/**` | `make check` (droast), then the image build and its smoke and supervision tests |
 
 Say which gates you could not run rather than implying they passed.
 

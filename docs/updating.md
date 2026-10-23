@@ -12,7 +12,7 @@ make check-updates                          # lists every pin with a newer upstr
 # edit the ARG (and its digest) in the Dockerfile
 make image-build image-test                 # smoke and supervision tests
 make compose-up projects-test               # the five projects' workflows, in the new image
-make check                                  # hadolint and the rest
+make check                                  # droast and the rest
 ```
 
 Commit the bump on its own (`fix(image): …` when it should ship). CI rebuilds the image and runs
@@ -30,11 +30,12 @@ the same automated tests.
 | `NODE_VERSION`, `NODE_SHA256` | SHA-256 | the release's `SHASUMS256.txt`; stay on the 24 line until the projects move |
 | `GH_VERSION`, `YQ_VERSION` (+ `_SHA256`) | release asset digest | `make check-updates` |
 | `OPENCODE_VERSION`, `OPENCODE_INTEGRITY` | npm's SHA-512 integrity of `@opencode/cli-linux-x64` (no build provenance) | `make check-updates`, from the package's `latest` tag. opencode 2 is only on npm: the GitHub releases of `anomalyco/opencode` are opencode 1 |
-| `GOLANGCI_LINT_VERSION`, `GORELEASER_VERSION`, `HADOLINT_VERSION` (+ `_SHA256`) | release asset digest | bump together with the projects that pin them (pre-commit revs, monmux's release workflow); hadolint also in `.pre-commit-config.yaml` and `.github/actions/setup-hadolint` |
+| `GOLANGCI_LINT_VERSION`, `GORELEASER_VERSION`, `HADOLINT_VERSION` (+ `_SHA256`) | release asset digest | bump together with the projects that pin them (pre-commit revs, monmux's release workflow); hadolint is only for the projects' hooks, this repository lints with droast |
 | `DOCKER_CLI_VERSION`, `DOCKER_BUILDX_VERSION`, `DOCKER_COMPOSE_VERSION` | Docker's apt signature, key fingerprint `DOCKER_SIGNER_FINGERPRINT` | `make check-updates` reads Docker's Ubuntu `resolute` `Packages` index |
+| `.github/actions/setup-shellcheck` (CI only, for droast's ShellCheck bridge) | release asset digest | bump together with the `shellcheck-py` rev in `.pre-commit-config.yaml`; the droast rev itself is Dependabot's |
 | `PLAYWRIGHT_VERSION` | npm | bump together with `@playwright/test` in bitgauge and runhold |
 | `PRE_COMMIT_VERSION` | PyPI | keep in step with the projects' CI pin |
-| Ubuntu packages | apt signatures (Ubuntu's archive key) | not pinned (hadolint DL3008 is off): they follow the base's security updates |
+| Ubuntu packages | apt signatures (Ubuntu's archive key) | not pinned (droast's DF005 stays below `min-severity`): they follow the base's security updates |
 | `container/etc/ssh/ssh_known_hosts` | fingerprints in GitHub's docs | only when GitHub rotates a host key: regenerate from `https://api.github.com/meta` and compare with GitHub's published fingerprints |
 
 ## Base image

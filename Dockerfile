@@ -132,7 +132,7 @@ ARG OPENCODE_VERSION=2.1.4
 ARG OPENCODE_INTEGRITY=sha512-o8EJ0ZsT4dzDKN+0mpG2EKbNGzJyp+F1++Av28UReRVfiEv+N34eZEnN/unkiMoerKHad6W6Ii7k4ukTnPNmNQ==
 RUN curl -fsSL -o /tmp/opencode.tgz \
 	"https://registry.npmjs.org/@opencode/cli-linux-x64/-/cli-linux-x64-${OPENCODE_VERSION}.tgz" \
-	&& echo "$(base64 -d <<<"${OPENCODE_INTEGRITY#sha512-}" | od -An -v -tx1 | tr -d ' \n')  /tmp/opencode.tgz" \
+	&& echo "$(printf %s "${OPENCODE_INTEGRITY#sha512-}" | base64 -d | od -An -v -tx1 | tr -d ' \n')  /tmp/opencode.tgz" \
 		| sha512sum --check --strict - \
 	&& tar -xzf /tmp/opencode.tgz -C /tmp package/bin/opencode \
 	&& install -D -m 0755 /tmp/package/bin/opencode /usr/local/bin/opencode \

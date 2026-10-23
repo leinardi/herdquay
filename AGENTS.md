@@ -27,12 +27,13 @@ make help                # lists every target
 ```
 
 Before calling a change done, run `make check`: checkmake, actionlint, markdownlint, shellcheck,
-prettier, yamllint, dclint, hadolint and the license headers. hadolint's hook runs the system
-binary, so it must be installed locally, at the release `.github/actions/setup-hadolint` pins (CI
-installs it with that action). In CI, `ci-result` is the one required check: it needs
-`pre-commit-all`, `conventional-commits`, `changes` and `image` (`ci.yaml`); `image` builds the
-image and runs the smoke and supervision tests, and may only be skipped when `changes` found no
-image input changed. The reviewdog jobs only annotate pull requests.
+prettier, yamllint, dclint, droast (Dockerfile Roast) and the license headers. pre-commit builds
+droast from source at its pinned rev, which needs a Rust toolchain (`cargo`) locally. Its required
+ShellCheck bridge runs the `shellcheck` on PATH, so install ShellCheck locally at the release
+`.github/actions/setup-shellcheck` pins (CI installs it with that action). In CI, `ci-result` is the
+one required check: it needs `pre-commit-all`, `conventional-commits`, `changes` and `image`
+(`ci.yaml`); `image` builds the image and runs the smoke and supervision tests, and may only be
+skipped when `changes` found no image input changed. The reviewdog jobs only annotate pull requests.
 
 The Makefile pulls shared snippets from `leinardi/make-common@v1` into `.mk/` on first run. Project
 targets live in the local `.mk/*.mk` files listed in `MK_LOCAL_FILES`, never as recipes in the
@@ -51,10 +52,10 @@ Makefile.
 | `scripts/local-secrets.sh`, `scripts/check-updates.sh` | the harness's ACL-provisioned secrets; the report of pins with newer releases |
 | `tests/` | `smoke.sh` and `supervision.sh` (CI), `projects.sh` (manual, the five projects' workflows), `lib.sh` |
 | `docs/` | operations, security, dev environment, updating, Docker access, deployment requirements, devbox comparison; `herdr-api.schema.json` (Herdr's API at the pinned version) |
-| `.github/actions/setup-hadolint/` | installs the pinned, digest-verified hadolint binary the hook runs |
+| `.github/actions/setup-shellcheck/` | installs the pinned, digest-verified ShellCheck binary droast's bridge runs |
 | `.github/workflows/pre-commit-warmup.yaml` | refreshes the pre-commit cache on `main` (hook config change, weekly) and prunes the older entries |
 | `scripts/check-license-headers.sh` | the MIT license-header check, an always-run pre-commit hook ([License headers](#license-headers)) |
-| `.hadolint.yaml`, `.dclintrc`, `.dockerignore` | Dockerfile and Compose lint rules, and the build context's exclusions |
+| `droast.toml`, `.dclintrc`, `.dockerignore` | Dockerfile and Compose lint rules, and the build context's exclusions |
 | `.agents/skills/` | project skills; `.claude/skills` is a symlink to it |
 
 ### Generated or vendored: never hand-edit
@@ -146,7 +147,7 @@ Run before considering an edit done. `make check` applies to every row.
 | `Makefile`, the `.mk/*.mk` files in `MK_LOCAL_FILES` | `make check` (checkmake), `make help` |
 | `scripts/bootstrap-mk-common.sh`, the make-common `.mk` files | never by hand: port the change to make-common, then `make mk-common-update` and `make help` |
 | `scripts/check-license-headers.sh` | `make check` (shellcheck and the hook itself); strip one governed file's header and confirm the check names it |
-| `Dockerfile`, `.hadolint.yaml`, `container/**` | `make check` (hadolint, shellcheck, license headers); `make image-build image-test`; a toolchain change also `make compose-up projects-test`; keep `docs/updating.md` and `docs/dev-environment.md` in step |
+| `Dockerfile`, `droast.toml`, `container/**` | `make check` (droast, shellcheck, license headers); `make image-build image-test`; a toolchain change also `make compose-up projects-test`; keep `docs/updating.md` and `docs/dev-environment.md` in step |
 | `tests/**`, `scripts/local-secrets.sh` | `make image-test` |
 | `compose*.yaml`, `.dclintrc` | `make check` (dclint) |
 | `**/*.md`, `.agents/skills/**` | `make check` (markdownlint); prose wrapped at 100 columns |

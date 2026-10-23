@@ -19,9 +19,10 @@ permissions:
 
 jobs:
   # The authoritative lint gate: every pre-commit hook over every file. The hooks bring their own
-  # tools (pre-commit installs them), except hadolint, whose hook runs the system binary installed
-  # below; actionlint also runs the runner's preinstalled shellcheck over the workflows' run:
-  # scripts. A hook that runs in a dedicated job instead is listed in SKIP with the job's name.
+  # tools (pre-commit installs them, droast built with the runner's Rust toolchain), except
+  # ShellCheck for droast's required bridge, which runs the pinned binary installed below;
+  # actionlint runs the same shellcheck over the workflows' run: scripts. A hook that runs in a
+  # dedicated job instead is listed in SKIP with the job's name.
   pre-commit-all:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -38,8 +39,8 @@ jobs:
       - name: Install pre-commit
         run: pip install --no-cache-dir pre-commit==4.6.2
 
-      - name: Set up hadolint
-        uses: ./.github/actions/setup-hadolint
+      - name: Set up ShellCheck
+        uses: ./.github/actions/setup-shellcheck
 
       # Restore only: pre-commit-warmup.yaml saves the entry on main under the same key.
       - name: Restore the pre-commit cache
@@ -97,9 +98,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The hadolint hook runs the system binary, which the runner does not have.
-      - name: Set up hadolint
-        uses: ./.github/actions/setup-hadolint
+      # droast's ShellCheck bridge runs the shellcheck on PATH: the pinned one, not the runner's.
+      - name: Set up ShellCheck
+        uses: ./.github/actions/setup-shellcheck
 
       - name: Run pre-commit hooks + reviewdog diff
         uses: leinardi/gha-pre-commit-reviewdog-actions/pre-commit-hooks@007919a45a04b0c52dfbb46732019dc4831fc03c # v1.0.3
@@ -116,7 +117,7 @@ jobs:
             check-toml
             check-added-large-files
             dclint
-            hadolint
+            droast
 
   markdownlint:
     if: github.event_name == 'pull_request'
@@ -228,7 +229,7 @@ jobs:
           PUSH_AFTER: ${{ github.sha }}
         run: |
           set -euo pipefail
-          image_paths='^(Dockerfile|\.dockerignore|compose[^/]*\.ya?ml|Makefile|\.hadolint\.yaml|\.github/workflows/ci\.yaml)$|^(container|tests|scripts|\.mk|\.github/actions)/'
+          image_paths='^(Dockerfile|\.dockerignore|compose[^/]*\.ya?ml|Makefile|droast\.toml|\.github/workflows/ci\.yaml)$|^(container|tests|scripts|\.mk|\.github/actions)/'
           case "${EVENT}" in
             pull_request) base="${PR_BASE}" head="${PR_HEAD}" ;;
             push) base="${PUSH_BEFORE}" head="${PUSH_AFTER}" ;;

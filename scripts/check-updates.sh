@@ -75,7 +75,7 @@ check_github golangci-lint golangci/golangci-lint GOLANGCI_LINT_VERSION 'golangc
 check_github goreleaser goreleaser/goreleaser GORELEASER_VERSION goreleaser_Linux_x86_64.tar.gz \
 	"matches monmux's release workflow: bump with it"
 check_github hadolint hadolint/hadolint HADOLINT_VERSION hadolint-linux-x86_64 \
-	"also .pre-commit-config.yaml and .github/actions/setup-hadolint"
+	"the projects' hooks run it: bump with their pre-commit rev"
 check_github yq mikefarah/yq YQ_VERSION yq_linux_amd64
 
 echo "Toolchains"

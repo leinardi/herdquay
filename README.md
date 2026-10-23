@@ -62,9 +62,10 @@ make check               # every hook over every file, the same run as CI's pre-
 make help                # lists every target
 ```
 
-The hooks cover the Dockerfile (hadolint, a system binary: install it locally), the Compose
-harness (dclint), shell (shellcheck), the workflows (actionlint), YAML, Markdown, the Makefile and
-the MIT license headers. See [AGENTS.md](AGENTS.md) for the conventions and the validation matrix.
+The hooks cover the Dockerfile ([droast](https://github.com/immanuwell/dockerfile-roast), built by
+pre-commit with `cargo`, and running a local `shellcheck`), the Compose harness (dclint), shell
+(shellcheck), the workflows (actionlint), YAML, Markdown, the Makefile and the MIT license headers.
+See [AGENTS.md](AGENTS.md) for the conventions and the validation matrix.
 
 ## Credits
 

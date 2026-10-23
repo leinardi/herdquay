@@ -87,12 +87,13 @@ repos:
         language_version: 22.15.0
         files: ^(?:.*/)?(?:docker-)?compose(?:\.[\w-]+)?\.ya?ml$
         args: [--fix]
-  # Runs the system hadolint binary (language: system upstream): install it locally, CI does with
-  # .github/actions/setup-hadolint, and the HerdQuay image ships the same release.
-  - repo: https://github.com/hadolint/hadolint
-    rev: v2.15.1
+  # Dockerfile Roast, built from source at this rev (language: rust), so every machine runs the
+  # same release. Policy in droast.toml; its ShellCheck bridge is required and runs the
+  # `shellcheck` on PATH, which CI pins with .github/actions/setup-shellcheck.
+  - repo: https://github.com/immanuwell/dockerfile-roast
+    rev: 1.7.0
     hooks:
-      - id: hadolint
+      - id: droast
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.4.0
     hooks:
