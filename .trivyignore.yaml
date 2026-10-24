@@ -1,0 +1,71 @@
+# Trivy findings the release and scheduled scans accept. Both scans run with --ignore-unfixed, so
+# only a HIGH or CRITICAL vulnerability that has a fix somewhere upstream can fail them. An entry
+# here is the only other exception, and every entry must say, in its statement, why the finding does
+# not apply or cannot be fixed here yet, and carry an expiry date that Trivy enforces, after which
+# the finding fails the scans again. Each entry is scoped to the paths it was found in, so the same
+# CVE in a tool added later still fails.
+#
+# The entries below are fixed in a dependency but not yet in a release of the tool that bundles it:
+# the pinned version is the latest, or one held back on purpose (docs/updating.md). Review them
+# when they expire: bump the tool if a fixed release is out, otherwise extend the date.
+vulnerabilities:
+  - id: CVE-2026-102276
+    paths:
+      - opt/node/lib/node_modules/npm/node_modules/brace-expansion/package.json
+    statement: brace-expansion bundled in npm of Node 24.22.1, the latest 24.x release.
+    expired_at: 2026-11-23
+  - id: CVE-2026-102278
+    paths:
+      - opt/node/lib/node_modules/npm/node_modules/brace-expansion/package.json
+    statement: brace-expansion bundled in npm of Node 24.22.1, the latest 24.x release.
+    expired_at: 2026-11-23
+  - id: CVE-2026-109869
+    paths:
+      - opt/node/lib/node_modules/npm/node_modules/undici/package.json
+    statement: undici bundled in npm of Node 24.22.1, the latest 24.x release.
+    expired_at: 2026-11-23
+  - id: CVE-2026-19534
+    paths:
+      - opt/node/lib/node_modules/npm/node_modules/undici/package.json
+    statement: undici bundled in npm of Node 24.22.1, the latest 24.x release.
+    expired_at: 2026-11-23
+  - id: CVE-2026-111943
+    paths: &go-stdlib-paths
+      - usr/bin/pebble
+      - usr/local/bin/golangci-lint
+      - usr/local/bin/goreleaser
+      - usr/local/bin/yq
+    statement: >-
+      Go standard library the binary was built with. pebble is Ubuntu's package; golangci-lint and
+      goreleaser are held at the projects' versions; yq 4.54.1 is the latest release.
+    expired_at: 2026-11-23
+  - id: CVE-2026-78667
+    paths: *go-stdlib-paths
+    statement: Go standard library the binary was built with (see CVE-2026-111943).
+    expired_at: 2026-11-23
+  - id: CVE-2026-97031
+    paths: *go-stdlib-paths
+    statement: Go standard library the binary was built with (see CVE-2026-111943).
+    expired_at: 2026-11-23
+  - id: CVE-2026-78669
+    paths:
+      - usr/bin/pebble
+      - usr/local/bin/golangci-lint
+      - usr/local/bin/goreleaser
+      - usr/local/bin/yq
+      - usr/libexec/docker/cli-plugins/docker-buildx
+      - usr/libexec/docker/cli-plugins/docker-compose
+    statement: >-
+      Go standard library and golang.org/x/net the binary was built with (see CVE-2026-111943);
+      docker-buildx 0.38.1 and docker-compose 5.6.1 are Docker's latest Ubuntu packages.
+    expired_at: 2026-11-23
+  - id: CVE-2026-17106
+    paths:
+      - usr/libexec/docker/cli-plugins/docker-buildx
+    statement: github.com/moby/go-archive in docker-buildx 0.38.1, Docker's latest Ubuntu package.
+    expired_at: 2026-11-23
+  - id: CVE-2026-84445
+    paths:
+      - usr/local/bin/goreleaser
+    statement: google.golang.org/grpc in goreleaser, held at monmux's release workflow version.
+    expired_at: 2026-11-23

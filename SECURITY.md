@@ -2,8 +2,9 @@
 
 ## Supported versions
 
-HerdQuay is not released yet: only `main` gets security fixes. Once images are published, only the
-latest release does, and released `vX.Y.Z` tags are immutable and never re-pointed.
+Only the latest release gets security fixes. Released `vX.Y.Z` tags and their images are
+immutable and never re-pointed: a fix ships as a new version
+([docs/release.md](docs/release.md)).
 
 The image never contains credentials. A report about a secret leaking out of a running container
 (SSH keys, the GitHub App's private key or its installation tokens, the Git signing key, Claude

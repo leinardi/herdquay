@@ -37,6 +37,8 @@ the same automated tests.
 | `.github/actions/setup-shellcheck` (CI only, for droast's ShellCheck bridge) | release asset digest | bump together with the `shellcheck-py` rev in `.pre-commit-config.yaml`; the droast rev itself is Dependabot's |
 | `PLAYWRIGHT_VERSION` | npm | bump together with `@playwright/test` in bitgauge and runhold |
 | `PRE_COMMIT_VERSION` | PyPI | keep in step with the projects' CI pin |
+| Dockerfile frontend (`# syntax=docker/dockerfile:<version>@sha256:…`) | digest | by hand: `docker buildx imagetools inspect docker/dockerfile:<version>`, tag and digest together |
+| Release tooling: `SVU_VERSION`, `GO_VERSION` (builds svu), `TRIVY_VERSION`, `REGISTRY_IMAGE`, `SKOPEO_IMAGE` in `release.yaml` (`TRIVY_VERSION` also in `scheduled-scan.yaml`) | versions and digests | by hand, as [release.md](release.md#what-the-workflows-trust) describes |
 | Ubuntu packages | apt signatures (Ubuntu's archive key) | not pinned (droast's DF005 stays below `min-severity`): they follow the base's security updates |
 
 ## Base image

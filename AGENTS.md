@@ -46,6 +46,7 @@ Makefile.
 | --- | --- |
 | `Makefile`, `.mk/`, `scripts/bootstrap-mk-common.sh` | make-common: shared snippets in `MK_COMMON_FILES`, local ones in `MK_LOCAL_FILES` |
 | `.github/workflows/ci.yaml` | `pre-commit-all`, `conventional-commits` and the `ci-result` aggregator; the reviewdog jobs on pull requests |
+| `.github/workflows/release.yaml`, `scheduled-scan.yaml`, `.trivyignore.yaml` | the dispatched release (image to GHCR, attested, signed; [`docs/release.md`](docs/release.md)), the weekly scan of `:latest`, and the scans' accepted findings |
 | `Dockerfile` | the image: a `fetch` stage that downloads and verifies every non-apt artifact, then the final stage on the same Ubuntu 26.04 base |
 | `container/bin/` | `herdquay-entrypoint` (supervisor), `herdquay-agents` (restore check and fallback), `herdquay-healthcheck`, `herdquay` (doctor), `herdquay-github` (GitHub App tokens, Git credential helper), `herdquay-gpg` (commit signing), the `gh` wrapper |
 | `container/etc/`, `container/share/`, `container/keys/` | sshd config, system gitconfig (credential helper, HTTPS rewrites), profile; seeded Herdr config; Anthropic's release key |
@@ -134,9 +135,9 @@ of a shipped `feat` or `fix` is itself a `fix`. `svu` matches `feat`/`fix` anywh
 (e.g. `prefix:` counts as `fix:`), so avoid a word ending in `feat` or `fix` directly before a colon
 in other subjects. PRs land as merge commits, so every commit counts, not just the PR title.
 
-There is no release workflow yet: image publishing arrives with the deployment phase, and these
-rules apply from its first release, which needs an explicit version (there is no tag to derive it
-from).
+Releases are cut by dispatching `release.yaml` on `main` ([`docs/release.md`](docs/release.md)).
+The first one needs an explicit version: there is no tag to derive it from. Tags are immutable, so
+a wrong release is answered with a higher version, never a moved tag.
 
 ## Validation matrix
 
@@ -144,7 +145,8 @@ Run before considering an edit done. `make check` applies to every row.
 
 | You edited | Run |
 | --- | --- |
-| `.github/workflows/**`, `.github/dependabot.yml` | `pre-commit run actionlint --all-files`; reason through each trigger the workflow has (pull request, push, dispatch, schedule) |
+| `.github/workflows/**`, `.github/dependabot.yml` | `pre-commit run actionlint --all-files`; reason through each trigger the workflow has (pull request, push, dispatch, schedule); for `release.yaml`, keep `docs/release.md` in step and dispatch a dry run |
+| `.trivyignore.yaml` | every entry scoped to paths, with a statement and an `expired_at`; scan `herdquay:local` with the release's Trivy command |
 | `.pre-commit-config.yaml` | `make check`; a hook that needs a system tool also gets it in `ci.yaml`'s `pre-commit-all` |
 | `Makefile`, the `.mk/*.mk` files in `MK_LOCAL_FILES` | `make check` (checkmake), `make help` |
 | `scripts/bootstrap-mk-common.sh`, the make-common `.mk` files | never by hand: port the change to make-common, then `make mk-common-update` and `make help` |

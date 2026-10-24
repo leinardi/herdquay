@@ -6,6 +6,8 @@ own secret handling.
 
 ## Service
 
+- The image `ghcr.io/leinardi/herdquay:<version>`, public, so no registry login is needed. Pin a
+  version (or its digest), not `:latest`, and verify it as [release.md](release.md) shows.
 - One replica: the home volume holds a single Herdr server's state.
 - A restart policy that restarts the container when it exits non-zero: the entrypoint exits 1
   when sshd or the Herdr server dies, and 0 on a requested stop.
