@@ -1,0 +1,306 @@
+#!/usr/bin/env bash
+#
+# MIT License
+#
+# Copyright (c) 2026 Roberto Leinardi
+# Copyright (c) 2026 Vít Rozsíval
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# HerdQuay's GitHub App credentials. The only long-lived secret is the App's private key; this
+# mints short-lived installation tokens from it (one hour, GitHub's limit) and caches them on tmpfs.
+# Adapted from rozsival/devbox's devbox-git-credential (MIT).
+#
+# Usage: herdquay-github git-credential get|store|erase   Git's credential helper protocol
+#        herdquay-github token                            an installation-wide token, for gh
+#        herdquay-github identity                         the App bot's name= and email= lines
+#        herdquay-github jwt                              the App's JWT (RS256, nine minutes)
+#
+# git-credential get answers only for https://github.com and needs the repository path
+# (credential.useHttpPath): the token it prints is restricted to that one repository. Any other
+# host gets no answer, so Git falls through to its next helper. erase (sent by Git after a rejected
+# credential) drops the repository's cached token and installation id; store does nothing.
+#
+# Configuration, from the environment or else ~/.config/herdquay/github.env (KEY=value lines,
+# written by the entrypoint, because SSH sessions do not inherit the container's environment):
+#   HERDQUAY_GITHUB_APP_ID        the App ID or client ID (the JWT's iss)
+#   HERDQUAY_GITHUB_APP_KEY_FILE  the App's private key (default /run/secrets/github_app_key)
+#   HERDQUAY_GITHUB_API_URL       the REST API (default https://api.github.com)
+#
+# The cache lives in /tmp/herdquay-github (directory 0700, files 0600, written atomically); nothing
+# reaches the home volume. Every key is a SHA-256 of the API URL, the App ID, the installation id
+# and the repository (* for installation-wide), so a changed App, API or installation never reuses
+# a token minted for the old one; a token is reused until five minutes before it expires.
+
+set -euo pipefail
+# Command substitutions fail with the function they call, not carry on with its empty output.
+shopt -s inherit_errexit
+
+ENV_FILE="${HOME}/.config/herdquay/github.env"
+CACHE_DIR="/tmp/herdquay-github"
+# Seconds before expires_at from which a cached token is minted again.
+REFRESH_WINDOW=300
+
+die() {
+	echo "herdquay-github: $*" >&2
+	exit 1
+}
+
+usage() {
+	echo "Usage: herdquay-github {git-credential get|store|erase|token|identity|jwt}" >&2
+	exit 2
+}
+
+# The environment wins; the env file fills in whatever it leaves unset. The file is parsed, never
+# sourced, and only these three keys are read from it.
+load_config() {
+	local key value
+	if [[ -r ${ENV_FILE} ]]; then
+		while IFS='=' read -r key value; do
+			case "${key}" in
+			HERDQUAY_GITHUB_APP_ID | HERDQUAY_GITHUB_APP_KEY_FILE | HERDQUAY_GITHUB_API_URL)
+				if [[ -z ${!key:-} ]]; then
+					printf -v "${key}" '%s' "${value}"
+				fi
+				;;
+			esac
+		done <"${ENV_FILE}"
+	fi
+	APP_ID="${HERDQUAY_GITHUB_APP_ID:-}"
+	KEY_FILE="${HERDQUAY_GITHUB_APP_KEY_FILE:-/run/secrets/github_app_key}"
+	API_URL="${HERDQUAY_GITHUB_API_URL:-https://api.github.com}"
+	API_URL="${API_URL%/}"
+	[[ -n ${APP_ID} ]] || die "the GitHub App is not configured: HERDQUAY_GITHUB_APP_ID is not set"
+	[[ -r ${KEY_FILE} ]] || die "the GitHub App key ${KEY_FILE} is missing or unreadable"
+}
+
+b64url() {
+	openssl base64 -A | tr '+/' '-_' | tr -d '='
+}
+
+jwt() {
+	local now header payload unsigned signature
+	now="$(date +%s)"
+	header="$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | b64url)"
+	# A numeric App ID goes in as a number, a client ID (Iv1..., Iv23...) as a string.
+	if [[ ${APP_ID} =~ ^[0-9]+$ ]]; then
+		payload="$(jq -cn --argjson iat "$((now - 60))" --argjson exp "$((now + 540))" \
+			--argjson iss "${APP_ID}" '{iat: $iat, exp: $exp, iss: $iss}' | tr -d '\n' | b64url)"
+	else
+		payload="$(jq -cn --argjson iat "$((now - 60))" --argjson exp "$((now + 540))" \
+			--arg iss "${APP_ID}" '{iat: $iat, exp: $exp, iss: $iss}' | tr -d '\n' | b64url)"
+	fi
+	unsigned="${header}.${payload}"
+	signature="$(printf '%s' "${unsigned}" | openssl dgst -sha256 -sign "${KEY_FILE}" -binary |
+		b64url)" || die "cannot sign with the GitHub App key ${KEY_FILE}"
+	[[ -n ${signature} ]] || die "cannot sign with the GitHub App key ${KEY_FILE}"
+	printf '%s.%s\n' "${unsigned}" "${signature}"
+}
+
+# api METHOD PATH AUTH [BODY]: prints the response body of a 2xx. Otherwise it prints the HTTP code
+# and GitHub's message and fails: 4 for a 404, 1 for anything else. AUTH is a bearer credential or
+# empty; it reaches curl on stdin, never on the command line, where any process could read it.
+api() {
+	local method="$1" path="$2" auth="$3" body="${4:-}" out code message
+	local -a args=(-sS --connect-timeout 10 --max-time 30 -X "${method}"
+		-H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28'
+		-w '\n%{http_code}' -K -)
+	if [[ -n ${body} ]]; then
+		args+=(-H 'Content-Type: application/json' --data-binary "${body}")
+	fi
+	out="$(if [[ -n ${auth} ]]; then
+		printf 'header = "Authorization: Bearer %s"\n' "${auth}"
+	fi | curl "${args[@]}" "${API_URL}${path}")" || die "${method} ${path}: the request failed"
+	code="${out##*$'\n'}"
+	out="${out%$'\n'*}"
+	if [[ ${code} != 2?? ]]; then
+		message="$(jq -r '.message // empty' <<<"${out}" 2>/dev/null || true)"
+		echo "herdquay-github: ${method} ${path}: HTTP ${code}${message:+: ${message}}" >&2
+		[[ ${code} != 404 ]] || return 4
+		return 1
+	fi
+	printf '%s\n' "${out}"
+}
+
+cache_init() {
+	if [[ ! -d ${CACHE_DIR} ]]; then
+		mkdir -m 0700 "${CACHE_DIR}" 2>/dev/null || [[ -d ${CACHE_DIR} ]] ||
+			die "cannot create ${CACHE_DIR}"
+	fi
+	# Shared /tmp: refuse a directory someone else planted, or a symlink to one.
+	[[ ! -L ${CACHE_DIR} && -O ${CACHE_DIR} ]] || die "${CACHE_DIR} is not a directory of this user"
+	chmod 0700 "${CACHE_DIR}"
+}
+
+cache_key() {
+	printf '%s\n' "$@" | sha256sum | cut -d' ' -f1
+}
+
+# The cache entries of a repository (owner/repo, or * for installation-wide).
+installation_file() {
+	echo "${CACHE_DIR}/installation-$(cache_key "${API_URL}" "${APP_ID}" "$1")"
+}
+
+token_file() {
+	echo "${CACHE_DIR}/token-$(cache_key "${API_URL}" "${APP_ID}" "$1" "$2")"
+}
+
+# cache_write FILE CONTENT: written to a 0600 temporary file, then renamed over FILE.
+cache_write() {
+	local file="$1" tmp
+	tmp="$(mktemp "${CACHE_DIR}/.tmp.XXXXXX")"
+	printf '%s\n' "$2" >"${tmp}"
+	mv -f "${tmp}" "${file}"
+}
+
+# The installation id for a repository (owner/repo) or, for *, the App's single installation.
+installation_id() {
+	local repo="$1" file id response count auth status=0
+	file="$(installation_file "${repo}")"
+	if [[ -s ${file} ]]; then
+		cat "${file}"
+		return 0
+	fi
+	auth="$(jwt)"
+	if [[ ${repo} == "*" ]]; then
+		response="$(api GET /app/installations "${auth}")"
+		count="$(jq 'length' <<<"${response}")"
+		[[ ${count} -ne 0 ]] || die "the GitHub App has no installation"
+		[[ ${count} -eq 1 ]] || die "the GitHub App has ${count} installations; HerdQuay needs exactly one"
+		id="$(jq -r '.[0].id' <<<"${response}")"
+	else
+		response="$(api GET "/repos/${repo}/installation" "${auth}")" || status=$?
+		[[ ${status} -ne 4 ]] || die "the GitHub App is not installed on ${repo}"
+		[[ ${status} -eq 0 ]] || exit 1
+		id="$(jq -r '.id' <<<"${response}")"
+	fi
+	[[ ${id} =~ ^[0-9]+$ ]] || die "unexpected installation id from GitHub: ${id}"
+	cache_write "${file}" "${id}"
+	echo "${id}"
+}
+
+# A cached or newly minted installation token for a repository (owner/repo) or * (every repository
+# of the installation).
+installation_token() {
+	local repo="$1" id file token expires body='{}' auth response
+	cache_init
+	id="$(installation_id "${repo}")"
+	file="$(token_file "${id}" "${repo}")"
+	if [[ -s ${file} ]]; then
+		token="$(jq -r '.token // empty' "${file}" 2>/dev/null || true)"
+		expires="$(jq -r '.expires_at // empty' "${file}" 2>/dev/null || true)"
+		expires="$(date -d "${expires}" +%s 2>/dev/null || echo 0)"
+		if [[ -n ${token} ]] && ((expires - $(date +%s) > REFRESH_WINDOW)); then
+			echo "${token}"
+			return 0
+		fi
+	fi
+	if [[ ${repo} != "*" ]]; then
+		body="$(jq -cn --arg name "${repo#*/}" '{repositories: [$name]}')"
+	fi
+	auth="$(jwt)"
+	if ! response="$(api POST "/app/installations/${id}/access_tokens" "${auth}" "${body}")"; then
+		# The installation may have been replaced: look it up again next time.
+		rm -f "$(installation_file "${repo}")"
+		exit 1
+	fi
+	token="$(jq -r '.token // empty' <<<"${response}")"
+	[[ -n ${token} ]] || die "GitHub returned no token for installation ${id}"
+	cache_write "${file}" "$(jq -c '{token, expires_at}' <<<"${response}")"
+	echo "${token}"
+}
+
+# owner/repo from Git's path (owner/repo.git, owner/repo, a trailing slash), or nothing.
+repository_from_path() {
+	local path="${1#/}" owner repo
+	path="${path%/}"
+	owner="${path%%/*}"
+	repo="${path#*/}"
+	repo="${repo%%/*}"
+	repo="${repo%.git}"
+	[[ ${path} == */* && ${owner} =~ ^[A-Za-z0-9._-]+$ && ${repo} =~ ^[A-Za-z0-9._-]+$ ]] || return 0
+	echo "${owner}/${repo}"
+}
+
+git_credential() {
+	local operation="${1:-}" line protocol="" host="" path="" repo file token
+	case "${operation}" in
+	get | erase) ;;
+	store) exit 0 ;;
+	*) usage ;;
+	esac
+	while IFS= read -r line && [[ -n ${line} ]]; do
+		case "${line}" in
+		protocol=*) protocol="${line#protocol=}" ;;
+		host=*) host="${line#host=}" ;;
+		path=*) path="${line#path=}" ;;
+		esac
+	done
+	[[ ${protocol} == https && ${host} == github.com ]] || exit 0
+	repo="$(repository_from_path "${path}")"
+	if [[ -z ${repo} ]]; then
+		[[ ${operation} == erase ]] ||
+			echo "herdquay-github: no repository in the credential request; set credential.useHttpPath" >&2
+		exit 0
+	fi
+	load_config
+	if [[ ${operation} == erase ]]; then
+		[[ -d ${CACHE_DIR} && ! -L ${CACHE_DIR} && -O ${CACHE_DIR} ]] || exit 0
+		file="$(installation_file "${repo}")"
+		if [[ -s ${file} ]]; then
+			rm -f "$(token_file "$(<"${file}")" "${repo}")"
+		fi
+		rm -f "${file}"
+		exit 0
+	fi
+	token="$(installation_token "${repo}")"
+	printf 'username=x-access-token\npassword=%s\n' "${token}"
+}
+
+identity() {
+	local auth slug id
+	auth="$(jwt)"
+	slug="$(api GET /app "${auth}" | jq -r '.slug // empty')"
+	[[ -n ${slug} ]] || die "GitHub returned no slug for the App"
+	# The bot user is public: no credential needed.
+	id="$(api GET "/users/${slug}%5Bbot%5D" "" | jq -r '.id // empty')"
+	[[ ${id} =~ ^[0-9]+$ ]] || die "GitHub returned no user id for ${slug}[bot]"
+	printf 'name=%s[bot]\nemail=%s+%s[bot]@users.noreply.github.com\n' "${slug}" "${id}" "${slug}"
+}
+
+case "${1:-}" in
+git-credential)
+	git_credential "${2:-}"
+	;;
+token)
+	load_config
+	installation_token "*"
+	;;
+identity)
+	load_config
+	identity
+	;;
+jwt)
+	load_config
+	jwt
+	;;
+*)
+	usage
+	;;
+esac
