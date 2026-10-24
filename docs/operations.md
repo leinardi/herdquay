@@ -77,9 +77,17 @@ The image does not contain Claude Code: its license grants no right to redistrib
 sshd and Herdr start, `herdquay-claude-install` downloads the release the image pins (about
 290 MB), checks that its manifest is signed by Anthropic's release key and that the binary
 matches the manifest's checksum, and installs it as Anthropic's installer would:
-`~/.local/share/claude/versions/<version>`, linked from `~/.local/bin/claude`. The next starts
-only re-link it. A new image with another pin installs that one and removes the rest, and so
-does a restart after a manual `claude update`: the pin wins.
+`~/.local/share/claude/versions/<version>`, linked from `~/.local/bin/claude`.
+
+From then on Claude Code updates itself: its auto-update downloads new releases in the background,
+and each session runs the new version from its next start. `claude update` does the same at once.
+The pin is a minimum: a start keeps whatever version is linked, as long as it is at or above the
+pin, and only installs the pin over a missing, broken or older one (removing the versions below
+it).
+
+opencode works the same way. The image carries a verified copy outside the `PATH`, and each start
+copies it to `~/.opencode/bin/opencode`, where opencode's own installer puts it, unless a version
+at or above it is already there. Its auto-update and `opencode upgrade` then replace it in place.
 
 If the download or a check fails, the container still starts, without Claude Code:
 `herdquay doctor` fails on it, and the next start tries again. The first start of a new pin needs
@@ -244,7 +252,8 @@ App:
 | Git or `gh` fails with "the GitHub App is not installed on …" | add the repository to the App's installation |
 | Git or `gh` fails to mint a token (HTTP 401) | the App key or `HERDQUAY_GITHUB_APP_ID` is wrong, or the key was deleted in the App's settings: generate a new key, update the secret, restart |
 | Claude asks to log in again | `/login` in a pane; the credentials live in `~/.claude/.credentials.json` on the home volume |
-| Claude Code is missing or not the pinned version | the start log says why; restart, or run `herdquay-claude-install` in a shell |
+| Claude Code is missing or older than the image's version | the start log says why; restart, or run `herdquay-claude-install` in a shell |
+| An update broke Claude Code or opencode | `claude install <version>` or `opencode upgrade <version>` for a working one at or above the image's; below it, a restart puts the image's back. Removing `~/.local/bin/claude` or `~/.opencode/bin/opencode` and restarting reinstalls the image's |
 | A conversation did not come back | `herdquay doctor` names it; `claude --resume <id>` in its directory |
 | Herdr's native restore stops working after an upgrade | set `resume_agents_on_restore = false` in `~/.config/herdr/config.toml` and `HERDQUAY_AGENT_RESTORE=1` |
 | Start from scratch | remove the home volume: a new host key, a new Claude login and an empty Herdr layout |

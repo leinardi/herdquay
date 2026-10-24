@@ -229,7 +229,7 @@ pinned="$(docker exec "${TEST_ID}-2" sed -n 's/^HERDQUAY_CLAUDE_VERSION=//p' /us
 [[ $(in_ssh "${TEST_ID}-2" 'readlink -f ~/.local/bin/claude') == "/home/herdquay/.local/share/claude/versions/${pinned}" ]] ||
 	die "the claude link is not the pinned ${pinned}"
 grep -qF "${pinned}" <<<"$(in_ssh "${TEST_ID}-2" 'claude --version')" || die "claude --version is not ${pinned}"
-grep -q "Claude Code ${pinned} already installed" <<<"$(docker logs "${TEST_ID}-2" 2>&1)" ||
+grep -q "Claude Code ${pinned} installed (the image's minimum is ${pinned})" <<<"$(docker logs "${TEST_ID}-2" 2>&1)" ||
 	die "the recreated container downloaded Claude Code again"
 docker run --rm --entrypoint bash "${IMAGE}" -c 'test ! -e /usr/local/bin/claude && ! command -v claude' >/dev/null ||
 	die "the image itself ships a claude binary"
@@ -238,6 +238,46 @@ if docker run --rm --entrypoint herdquay-claude-install \
 	die "herdquay-claude-install accepted a manifest signed by an unexpected key"
 fi
 pass "Claude Code ${pinned}: installed at first start, verified, kept across recreation, not in the image"
+
+opencode_version="$(docker exec "${TEST_ID}-2" /usr/local/share/herdquay/opencode --version)"
+[[ $(in_ssh "${TEST_ID}-2" 'command -v opencode') == /home/herdquay/.opencode/bin/opencode ]] ||
+	die "opencode does not run from ~/.opencode/bin"
+[[ $(in_ssh "${TEST_ID}-2" 'opencode --version') == "${opencode_version}" ]] || die "opencode is not the image's ${opencode_version}"
+docker run --rm --entrypoint bash "${IMAGE}" -c '! command -v opencode' >/dev/null ||
+	die "the image puts its own opencode on the PATH"
+pass "${opencode_version}: copied into ~/.opencode/bin, the only one on the PATH"
+
+# fake_versions <name> <version>: a stand-in Claude Code <version>, linked as Anthropic's updater
+# links one, and a stand-in opencode <version> in ~/.opencode/bin, as `opencode upgrade` leaves it.
+fake_versions() {
+	in_ssh "$1" "v=~/.local/share/claude/versions
+printf '#!/bin/sh\necho \"$2 (Claude Code)\"\n' >\$v/$2 && chmod 0755 \$v/$2 && ln -sfn \$v/$2 ~/.local/bin/claude
+printf '#!/bin/sh\necho opencode v$2\n' >~/.opencode/bin/opencode.new && chmod 0755 ~/.opencode/bin/opencode.new &&
+mv -f ~/.opencode/bin/opencode.new ~/.opencode/bin/opencode"
+}
+
+# A self-update survives a restart; a version below the image's is replaced, and Claude Code's
+# older versions are removed.
+fake_versions "${TEST_ID}-2" 99.0.0
+docker restart "${TEST_ID}-2" >/dev/null
+wait_healthy "${TEST_ID}-2"
+[[ $(in_ssh "${TEST_ID}-2" 'readlink -f ~/.local/bin/claude') == /home/herdquay/.local/share/claude/versions/99.0.0 ]] ||
+	die "a restart reverted a newer Claude Code"
+[[ $(in_ssh "${TEST_ID}-2" 'opencode --version') == "opencode v99.0.0" ]] || die "a restart reverted a newer opencode"
+in_ssh "${TEST_ID}-2" "test -x ~/.local/share/claude/versions/${pinned}" || die "the restart removed Claude Code ${pinned}"
+grep -q '^  ok    Claude Code 99.0.0, at or above' <<<"$(in_ssh "${TEST_ID}-2" 'herdquay doctor' || true)" ||
+	die "herdquay doctor does not accept a newer Claude Code"
+fake_versions "${TEST_ID}-2" 0.0.1
+docker restart "${TEST_ID}-2" >/dev/null
+wait_healthy "${TEST_ID}-2"
+[[ $(in_ssh "${TEST_ID}-2" 'readlink -f ~/.local/bin/claude') == "/home/herdquay/.local/share/claude/versions/${pinned}" ]] ||
+	die "an older Claude Code was not replaced with ${pinned}"
+in_ssh "${TEST_ID}-2" 'test ! -e ~/.local/share/claude/versions/0.0.1 && test -x ~/.local/share/claude/versions/99.0.0' ||
+	die "the versions below ${pinned} were not removed, or a newer one was"
+[[ $(in_ssh "${TEST_ID}-2" 'opencode --version') == "${opencode_version}" ]] ||
+	die "an older opencode was not replaced with the image's"
+in_ssh "${TEST_ID}-2" 'rm ~/.local/share/claude/versions/99.0.0'
+pass "self-updates: newer Claude Code and opencode kept across restarts, older ones replaced"
 
 # A home from an older HerdQuay, whose entrypoint seeded user.* into ~/.gitconfig: it keeps that
 # identity, the file is left alone, and the doctor says how to clean it up.

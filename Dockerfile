@@ -210,7 +210,6 @@ COPY --from=fetch /opt/node /opt/node
 COPY --from=fetch /opt/gh /opt/gh
 COPY --from=fetch \
 	/usr/local/bin/herdr \
-	/usr/local/bin/opencode \
 	/usr/local/bin/golangci-lint \
 	/usr/local/bin/goreleaser \
 	/usr/local/bin/hadolint \
@@ -269,6 +268,10 @@ RUN chmod -R go-w /etc/ssh /etc/gitconfig /etc/profile.d/herdquay.sh /usr/local/
 RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} + \
 	&& getcap -r / 2>/dev/null | awk '{print $1}' | xargs -r -n1 setcap -r
 
+# opencode outside the PATH: the entrypoint copies it into the home volume, where it updates
+# itself. After the chmod above, which would copy it into one more layer.
+COPY --from=fetch /usr/local/bin/opencode /usr/local/share/herdquay/opencode
+
 # The Claude Code release to install and the fingerprint its manifest must be signed with, in a
 # file rather than ENV so that SSH sessions (herdquay doctor) read the same pin.
 ARG CLAUDE_VERSION=2.1.308
@@ -291,10 +294,8 @@ ENV HOME=/home/herdquay \
 	USER=herdquay \
 	SHELL=/bin/bash \
 	LANG=C.UTF-8 \
-	PATH=/home/herdquay/.local/bin:/home/herdquay/go/bin:/usr/local/go/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-	GOTOOLCHAIN=auto \
-	DISABLE_AUTOUPDATER=1 \
-	OPENCODE_DISABLE_AUTOUPDATE=1
+	PATH=/home/herdquay/.local/bin:/home/herdquay/.opencode/bin:/home/herdquay/go/bin:/usr/local/go/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+	GOTOOLCHAIN=auto
 
 USER ${HERDQUAY_UID}:${HERDQUAY_GID}
 WORKDIR /home/herdquay
