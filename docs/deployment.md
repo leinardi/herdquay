@@ -15,8 +15,13 @@ own secret handling.
   entrypoint stops both children and Herdr saves its session before the runtime's SIGKILL.
 - `cap_drop: ALL`, no `privileged`, no added capabilities, no host network or PID namespace, no
   Docker socket. Keep the image's user, 568:568 (`HERDQUAY_UID`/`HERDQUAY_GID` at build time).
-- `/tmp` as a tmpfs **with `exec`** (`nosuid,nodev` kept): Go tests, Playwright and pre-commit run
-  binaries from it, and Docker mounts a tmpfs `noexec` by default.
+  Add `no-new-privileges` where the orchestrator supports it; Docker Swarm ignores `security_opt`,
+  which the image allows for by carrying no setuid, setgid or file-capability binary.
+- `/tmp` must allow **`exec`**: Go tests, Playwright and pre-commit run binaries from it. With plain
+  Docker or Compose, mount it as a tmpfs with `exec` (`nosuid,nodev` kept; Docker mounts a tmpfs
+  `noexec` by default). Docker Swarm ignores a service's `tmpfs` and mounts a `tmpfs` volume
+  `noexec`, so there leave `/tmp` unmounted, on the container's writable layer. Keep the default
+  `/dev/shm`: the token cache and the signing keyring live there.
 - The image has a `HEALTHCHECK` (sshd listening on 2222, the Herdr server answering), with a
   6-minute start period that covers the first start's Claude Code download, and logs to
   stdout/stderr.

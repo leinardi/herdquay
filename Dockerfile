@@ -262,6 +262,13 @@ COPY container/npmrc /opt/node/etc/npmrc
 RUN chmod -R go-w /etc/ssh /etc/gitconfig /etc/profile.d/herdquay.sh /usr/local/share/herdquay \
 		/opt/node/etc/npmrc /usr/local/bin/gh /usr/local/bin/herdquay /usr/local/bin/herdquay-*
 
+# Nothing in the image may raise a process's privileges: Docker Swarm ignores no-new-privileges,
+# and a setuid root binary (su, mount, passwd) would still run as UID 0 there, without
+# capabilities but able to write root-owned files. HerdQuay never uses one. The smoke test checks
+# that none is left.
+RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} + \
+	&& getcap -r / 2>/dev/null | awk '{print $1}' | xargs -r -n1 setcap -r
+
 # The Claude Code release to install and the fingerprint its manifest must be signed with, in a
 # file rather than ENV so that SSH sessions (herdquay doctor) read the same pin.
 ARG CLAUDE_VERSION=2.1.308

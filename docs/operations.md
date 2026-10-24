@@ -46,8 +46,8 @@ private key; `herdquay-github` mints installation tokens from it, valid for one 
 - **`gh`**: the wrapper puts an installation-wide token in `GH_TOKEN` for its own process; an
   explicit `GH_TOKEN` or `GITHUB_TOKEN` wins. Pull requests and issues it creates show the App's
   bot as their author.
-- Tokens are cached in `/tmp/herdquay-github` (tmpfs) and minted again five minutes before they
-  expire; nothing is stored on the home volume or in `~/.config/gh/hosts.yml`.
+- Tokens are cached in `/dev/shm/herdquay-github` (the container's RAM tmpfs) and minted again
+  five minutes before they expire; nothing is stored on disk or in `~/.config/gh/hosts.yml`.
 
 Not supported with an App token: anything that acts as a user, such as `gh api user`, and
 authenticated Gist operations (Gists belong to a user, so there is no credential helper for
@@ -106,13 +106,13 @@ scripts/local-secrets.sh --git-signing-key herdquay-signing.asc   # local harnes
 rm herdquay-signing.asc
 ```
 
-At start the entrypoint adds `gpg.program`, `user.signingkey`, `commit.gpgsign` and `tag.gpgsign`
-to `~/.config/herdquay/identity.gitconfig`; a value in `~/.gitconfig` still overrides them.
-`herdquay-gpg` imports the key into `/tmp/herdquay-gnupg`, never `~/.gnupg`, and imports it again
-whenever the secret's content changes, so a renewal (`gpg --quick-set-expire`, then the secret
-updated) needs no restart. `herdquay doctor` shows whether signing is on, the key's fingerprint and
-expiry, warns when no UID of the key matches the commit email (GitHub would show Unverified) or
-when the key is ignored for the bot, and makes a test signature. To revoke the key:
+At start the entrypoint adds `gpg.program`, `user.signingkey`, `commit.gpgsign` and `tag.gpgsign` to
+`~/.config/herdquay/identity.gitconfig`; a value in `~/.gitconfig` still overrides them.
+`herdquay-gpg` imports the key into `/dev/shm/herdquay-gnupg` (RAM), never `~/.gnupg`, and imports
+it again whenever the secret's content changes, so a renewal (`gpg --quick-set-expire`, then the
+secret updated) needs no restart. `herdquay doctor` shows whether signing is on, the key's
+fingerprint and expiry, warns when no UID of the key matches the commit email (GitHub would show
+Unverified) or when the key is ignored for the bot, and makes a test signature. To revoke the key:
 `gh gpg-key delete <id>`, then remove the secret; commits already pushed may keep their Verified
 status, so review what the key signed. In the local harness, the signing key is mounted by
 `compose.github.yaml`, so only together with the App key.
