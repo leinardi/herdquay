@@ -194,7 +194,7 @@ check_github() {
 }
 
 doctor() {
-	local network=0 status integrations pinned app_id app_key signing_key
+	local network=0 status integrations minimum installed app_id app_key signing_key
 	[[ ${1:-} == --network ]] && network=1
 
 	section "Identity"
@@ -271,13 +271,22 @@ doctor() {
 	check_tool ssh ssh -V
 	check_tool herdr herdr --version
 	check_tool claude claude --version
-	pinned="$(sed -n 's/^HERDQUAY_CLAUDE_VERSION=//p' /usr/local/share/herdquay/claude-release)"
-	if [[ -n ${pinned} && $(readlink -f "${HOME}/.local/bin/claude" 2>/dev/null) == "${HOME}/.local/share/claude/versions/${pinned}" ]]; then
-		ok "Claude Code is the pinned ${pinned}"
+	# The image's Claude Code version is a minimum: Claude Code updates itself above it.
+	minimum="$(sed -n 's/^HERDQUAY_CLAUDE_VERSION=//p' /usr/local/share/herdquay/claude-release)"
+	installed="$(readlink -f "${HOME}/.local/bin/claude" 2>/dev/null || true)"
+	installed="${installed#"${HOME}/.local/share/claude/versions/"}"
+	if [[ -n ${minimum} && ${installed} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ &&
+		$(printf '%s\n' "${installed}" "${minimum}" | sort -V | head -n 1) == "${minimum}" ]]; then
+		ok "Claude Code ${installed}, at or above the image's ${minimum}"
 	else
-		fail "Claude Code is not the pinned ${pinned:-version} (restart, or run herdquay-claude-install)"
+		fail "Claude Code is not installed at or above the image's ${minimum:-version} (restart, or run herdquay-claude-install)"
 	fi
 	check_tool opencode opencode --version
+	if [[ $(command -v opencode) == "${HOME}/.opencode/bin/opencode" ]]; then
+		ok "opencode runs from ~/.opencode/bin (self-updating)"
+	else
+		fail "opencode does not run from ~/.opencode/bin (restart to reinstall it)"
+	fi
 	check_tool go go version
 	check_tool node node --version
 	check_tool npm npm --version

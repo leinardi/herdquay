@@ -27,7 +27,8 @@
 # the other is stopped and the container exits non-zero so the orchestrator restarts it. A
 # requested stop (SIGTERM, SIGINT) stops both within HERDQUAY_STOP_TIMEOUT seconds and exits 0.
 # Claude Code itself is installed into the home volume first (herdquay-claude-install;
-# HERDQUAY_CLAUDE_INSTALL=0 skips it). The Git identity and the GitHub App's configuration for SSH
+# HERDQUAY_CLAUDE_INSTALL=0 skips it), and so is opencode (install_opencode): both then update
+# themselves, and the image's versions are only minimums. The Git identity and the GitHub App's configuration for SSH
 # sessions are rewritten in ~/.config/herdquay at every start. Herdr's native restore resumes the
 # previous run's Claude agents; once Herdr answers, herdquay-agents checks that it did, in the
 # background and unsupervised (a miss is logged, never fatal). HERDQUAY_AGENT_RESTORE=1 makes
@@ -43,6 +44,7 @@ AUTHORIZED_KEYS_FILE="${HERDQUAY_AUTHORIZED_KEYS_FILE:-/run/secrets/authorized_k
 STATE_DIR="${HOME}/.local/state/herdquay"
 HERDR_DIR="${HOME}/.config/herdr"
 SHARE_DIR=/usr/local/share/herdquay
+OPENCODE_DIR="${HOME}/.opencode/bin"
 HERDQUAY_CONFIG_DIR="${HOME}/.config/herdquay"
 
 log() {
@@ -118,6 +120,39 @@ seed_config() {
 # The GitHub configuration for SSH sessions, which do not inherit this environment: the App ID, the
 # App key's and the signing key's file paths and the API URL that are set, never a key itself.
 # Rewritten at every start, so a variable removed from the deployment is gone from SSH sessions too.
+# The version a binary's --version prints (`opencode v2.1.4`), empty if it does not run.
+binary_version() {
+	local out
+	out="$(timeout 10 "$1" --version 2>/dev/null)" || return 0
+	out="${out##* }"
+	out="${out#v}"
+	[[ ${out} =~ ^[0-9]+(\.[0-9]+)*$ ]] && printf '%s\n' "${out}"
+	return 0
+}
+
+# opencode lives in ~/.opencode/bin, where its own installer puts it, so `opencode upgrade` and its
+# auto-update replace it in place. The image's copy (verified at build) is the minimum: it is
+# copied there only when the home has none, or an older or broken one.
+install_opencode() {
+	local seed="${SHARE_DIR}/opencode" seed_version current_version tmp
+	seed_version="$(binary_version "${seed}")"
+	if [[ -z ${seed_version} ]]; then
+		log "warning: the image's opencode does not run; ${OPENCODE_DIR}/opencode left as it is"
+		return 0
+	fi
+	current_version="$(binary_version "${OPENCODE_DIR}/opencode")"
+	if [[ -n ${current_version} &&
+		$(printf '%s\n' "${current_version}" "${seed_version}" | sort -V | head -n 1) == "${seed_version}" ]]; then
+		return 0
+	fi
+	mkdir -p "${OPENCODE_DIR}"
+	tmp="$(mktemp "${OPENCODE_DIR}/.opencode.XXXXXX")"
+	cat "${seed}" >"${tmp}"
+	chmod 0755 "${tmp}"
+	mv -f "${tmp}" "${OPENCODE_DIR}/opencode"
+	log "installed opencode ${seed_version}${current_version:+ (replacing ${current_version})}"
+}
+
 write_github_env() {
 	local file="${HERDQUAY_CONFIG_DIR}/github.env" tmp name
 	tmp="$(mktemp "${file}.XXXXXX")"
@@ -243,6 +278,7 @@ main() {
 	ensure_host_key
 	install_authorized_keys
 	seed_config
+	install_opencode
 	write_github_env
 	write_git_identity
 	# Before the Herdr server starts: its native restore resumes the Claude panes right away. A

@@ -4,7 +4,7 @@ Docker image: persistent remote AI coding env (unprivileged sshd on 2222, headle
 
 Source map:
 - `Dockerfile`: `fetch` stage downloads + verifies every non-apt artifact; final stage same `ubuntu:26.04` base. Narrow `chmod -R go-w` list (dirs, not files).
-- `container/bin/` -> `/usr/local/bin`: `herdquay-entrypoint` (tini child; supervises sshd + `herdr server`), `herdquay` (doctor), `herdquay-agents`, `herdquay-healthcheck`, `herdquay-claude-install` (Claude installed at first start into the home volume, never shipped), `herdquay-github` (GitHub App tokens + git credential helper), `herdquay-gpg` (signing keyring on tmpfs), `gh` wrapper (real gh at `/opt/gh/bin/gh`).
+- `container/bin/` -> `/usr/local/bin`: `herdquay-entrypoint` (tini child; supervises sshd + `herdr server`), `herdquay` (doctor), `herdquay-agents`, `herdquay-healthcheck`, `herdquay-claude-install` (Claude installed at first start into the home volume, never shipped; pin is a minimum, Claude self-updates; opencode likewise seeded into `~/.opencode/bin` by the entrypoint), `herdquay-github` (GitHub App tokens + git credential helper), `herdquay-gpg` (signing keyring on tmpfs), `gh` wrapper (real gh at `/opt/gh/bin/gh`).
 - `container/etc/` -> `/etc`: sshd_config, system gitconfig (credential helper, HTTPS insteadOf rewrites, include of `~/.config/herdquay/identity.gitconfig`).
 - `compose.yaml` + optional `compose.github.yaml` overlay (added by `.mk/image.mk` when `local/secrets/github_app_key` exists).
 - `scripts/local-secrets.sh`: harness secrets in ignored `local/secrets/`, ACL-granted to UID 568.

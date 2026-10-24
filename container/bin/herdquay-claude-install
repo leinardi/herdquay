@@ -26,8 +26,9 @@
 # installer lays it out (~/.local/share/claude/versions/<version>, linked from ~/.local/bin/claude),
 # so the image itself carries no Anthropic binary. The release manifest must be signed by the
 # vendored release key with the pinned fingerprint, and the binary must match the manifest's
-# checksum. Idempotent: an installed pinned version is only re-linked, and every other version is
-# removed, so a manual `claude update` does not outlive a restart.
+# checksum. The pin is a minimum: Claude Code then updates itself (its auto-update, or
+# `claude update`), and a linked version at or above the pin is kept as it is. Only a missing,
+# broken or older install is replaced with the pin, and the versions below the pin are removed.
 #
 # Usage: herdquay-claude-install
 
@@ -56,6 +57,19 @@ die() {
 [[ ${FINGERPRINT} =~ ^[0-9A-F]{40}$ ]] || die "no signer fingerprint pinned (${RELEASE_FILE})"
 [[ ${TIMEOUT} =~ ^[0-9]+$ ]] || die "HERDQUAY_CLAUDE_INSTALL_TIMEOUT must be a whole number of seconds"
 
+# Whether version $1 is at or above version $2.
+at_least() {
+	[[ $(printf '%s\n' "$1" "$2" | sort -V | head -n 1) == "$2" ]]
+}
+
+current="$(readlink -f "${LINK}" 2>/dev/null || true)"
+current_version="${current#"${VERSIONS_DIR}/"}"
+if [[ ${current} == "${VERSIONS_DIR}/${current_version}" && ${current_version} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ &&
+	-x ${current} ]] && at_least "${current_version}" "${VERSION}"; then
+	log "Claude Code ${current_version} installed (the image's minimum is ${VERSION})"
+	exit 0
+fi
+
 target="${VERSIONS_DIR}/${VERSION}"
 mkdir -p "${VERSIONS_DIR}" "${LINK%/*}"
 
@@ -71,8 +85,9 @@ else
 	export GNUPGHOME="${work}/gnupg"
 	mkdir -m 0700 "${GNUPGHOME}"
 	gpg --batch --quiet --import "${KEY}" 2>/dev/null || die "could not import ${KEY}"
-	gpg --batch --status-fd 1 --verify "${work}/manifest.json.sig" "${work}/manifest.json" 2>/dev/null |
-		grep -q "^\[GNUPG:\] VALIDSIG ${FINGERPRINT} " ||
+	# Captured first: under pipefail, grep -q exiting at its first match would SIGPIPE gpg.
+	status="$(gpg --batch --status-fd 1 --verify "${work}/manifest.json.sig" "${work}/manifest.json" 2>/dev/null || true)"
+	grep -q "^\[GNUPG:\] VALIDSIG ${FINGERPRINT} " <<<"${status}" ||
 		die "the ${VERSION} manifest is not signed by ${FINGERPRINT}"
 	[[ $(jq -r .version "${work}/manifest.json") == "${VERSION}" ]] ||
 		die "the signed manifest is for another version"
@@ -94,4 +109,9 @@ else
 fi
 
 ln -sfn "${target}" "${LINK}"
-find "${VERSIONS_DIR}" -mindepth 1 -maxdepth 1 ! -name "${VERSION}" -exec rm -rf {} +
+for version in "${VERSIONS_DIR}"/*; do
+	version="${version##*/}"
+	if [[ ${version} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && ! at_least "${version}" "${VERSION}"; then
+		rm -rf "${VERSIONS_DIR:?}/${version}"
+	fi
+done
