@@ -47,6 +47,9 @@
 # reaches the home volume. Every key is a SHA-256 of the API URL, the App ID, the installation id
 # and the repository (* for installation-wide), so a changed App, API or installation never reuses
 # a token minted for the old one; a token is reused until five minutes before it expires.
+#
+# Exits 3 when no App is configured at all (neither the App ID nor the key file), 1 on any other
+# error, with the reason on stderr.
 
 set -euo pipefail
 # Command substitutions fail with the function they call, not carry on with its empty output.
@@ -86,6 +89,10 @@ load_config() {
 	KEY_FILE="${HERDQUAY_GITHUB_APP_KEY_FILE:-/run/secrets/github_app_key}"
 	API_URL="${HERDQUAY_GITHUB_API_URL:-https://api.github.com}"
 	API_URL="${API_URL%/}"
+	if [[ -z ${APP_ID} && ! -e ${KEY_FILE} ]]; then
+		echo "herdquay-github: the GitHub App is not configured (no HERDQUAY_GITHUB_APP_ID, no ${KEY_FILE})" >&2
+		exit 3
+	fi
 	[[ -n ${APP_ID} ]] || die "the GitHub App is not configured: HERDQUAY_GITHUB_APP_ID is not set"
 	[[ -r ${KEY_FILE} ]] || die "the GitHub App key ${KEY_FILE} is missing or unreadable"
 }

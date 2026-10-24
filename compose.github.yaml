@@ -1,13 +1,16 @@
-# Adds the GitHub secrets to the local harness: HerdQuay's SSH key and the fine-grained token.
-# make compose-up includes this file when local/secrets/github_ssh_key and github_token exist.
+# Adds the GitHub App to the local harness: its private key as a secret, and its App ID from the
+# shell or .env (HERDQUAY_GITHUB_APP_ID, required). make compose-up includes this file when
+# local/secrets/github_app_key exists. HERDQUAY_GIT_NAME and HERDQUAY_GIT_EMAIL, both or neither,
+# replace the App's bot as the commit identity.
 services:
   herdquay:
     secrets:
-      - github_ssh_key
-      - github_token
+      - github_app_key
+    environment:
+      HERDQUAY_GITHUB_APP_ID: "${HERDQUAY_GITHUB_APP_ID:?set HERDQUAY_GITHUB_APP_ID to the GitHub App's ID}"
+      HERDQUAY_GIT_NAME: "${HERDQUAY_GIT_NAME:-}"
+      HERDQUAY_GIT_EMAIL: "${HERDQUAY_GIT_EMAIL:-}"
 
 secrets:
-  github_ssh_key:
-    file: ./local/secrets/github_ssh_key
-  github_token:
-    file: ./local/secrets/github_token
+  github_app_key:
+    file: ./local/secrets/github_app_key

@@ -29,8 +29,8 @@ IMAGE          := $(IMAGE_NAME):$(IMAGE_TAG)
 IMAGE_VERSION  ?= $(shell git -C "$(REPO_ROOT)" describe --tags --always --dirty 2>/dev/null || echo dev)
 IMAGE_REVISION ?= $(shell git -C "$(REPO_ROOT)" rev-parse HEAD 2>/dev/null || echo unknown)
 IMAGE_CREATED  ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-# The GitHub secrets are optional: their override file is added only when both exist.
-COMPOSE_FILES  := -f "$(REPO_ROOT)/compose.yaml" $(if $(and $(wildcard $(REPO_ROOT)/local/secrets/github_ssh_key),$(wildcard $(REPO_ROOT)/local/secrets/github_token)),-f "$(REPO_ROOT)/compose.github.yaml")
+# The GitHub App is optional: its override file is added only when its key exists.
+COMPOSE_FILES  := -f "$(REPO_ROOT)/compose.yaml" $(if $(wildcard $(REPO_ROOT)/local/secrets/github_app_key),-f "$(REPO_ROOT)/compose.github.yaml")
 COMPOSE        ?= docker compose $(COMPOSE_FILES)
 
 .PHONY: image-build

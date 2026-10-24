@@ -32,25 +32,22 @@
 # entry turns the group mode bits into the ACL mask, so ls and stat show 0640 even though the
 # owning group gets nothing: the check below reads the effective ACL instead of the mode bits.
 #
-# Usage: scripts/local-secrets.sh [--authorized-keys <file>] [--github-ssh-key <file>]
-#                                 [--github-token-file <file>] [--check]
-#   --authorized-keys    the public key(s) allowed to SSH in (default: the first of
-#                        ~/.ssh/id_ed25519.pub, id_ecdsa.pub, id_rsa.pub)
-#   --github-ssh-key     HerdQuay's own private key for GitHub (optional)
-#   --github-token-file  a file holding the fine-grained GitHub token (optional; read from a file,
-#                        never from the command line, so it stays out of the shell history)
-#   --check              only verify the existing files
+# Usage: scripts/local-secrets.sh [--authorized-keys <file>] [--github-app-key <pem>] [--check]
+#   --authorized-keys  the public key(s) allowed to SSH in (default: the first of
+#                      ~/.ssh/id_ed25519.pub, id_ecdsa.pub, id_rsa.pub)
+#   --github-app-key   the GitHub App's private key, as downloaded from the App's settings
+#                      (optional)
+#   --check            only verify the existing files
 #
-# The GitHub secrets are optional: compose.github.yaml mounts them, and make compose-up adds that
-# file only when both exist.
+# The GitHub App key is optional: compose.github.yaml mounts it with HERDQUAY_GITHUB_APP_ID, and
+# make compose-up adds that file only when local/secrets/github_app_key exists.
 
 set -euo pipefail
 
 CONTAINER_UID="${HERDQUAY_UID:-568}"
 SECRETS_DIR="${HERDQUAY_SECRETS_DIR:-$(git rev-parse --show-toplevel)/local/secrets}"
 authorized_keys_source=""
-github_ssh_key_source=""
-github_token_source=""
+github_app_key_source=""
 check_only=0
 
 die() {
@@ -65,14 +62,9 @@ while [[ $# -gt 0 ]]; do
 		authorized_keys_source="$2"
 		shift 2
 		;;
-	--github-ssh-key)
-		[[ $# -ge 2 ]] || die "--github-ssh-key needs a file"
-		github_ssh_key_source="$2"
-		shift 2
-		;;
-	--github-token-file)
-		[[ $# -ge 2 ]] || die "--github-token-file needs a file"
-		github_token_source="$2"
+	--github-app-key)
+		[[ $# -ge 2 ]] || die "--github-app-key needs a file"
+		github_app_key_source="$2"
 		shift 2
 		;;
 	--check)
@@ -123,13 +115,11 @@ if ((!check_only)); then
 	fi
 	install -d -m 0700 "${SECRETS_DIR}"
 	provision_file "${authorized_keys_source}" "${SECRETS_DIR}/authorized_keys"
-	if [[ -n ${github_ssh_key_source} ]]; then
-		ssh-keygen -y -P '' -f "${github_ssh_key_source}" >/dev/null 2>&1 ||
-			die "${github_ssh_key_source} is not an unencrypted private key (HerdQuay cannot unlock a passphrase)"
-		provision_file "${github_ssh_key_source}" "${SECRETS_DIR}/github_ssh_key"
-	fi
-	if [[ -n ${github_token_source} ]]; then
-		provision_file "${github_token_source}" "${SECRETS_DIR}/github_token"
+	if [[ -n ${github_app_key_source} ]]; then
+		# An empty passphrase: an encrypted key fails, since nothing could unlock it unattended.
+		openssl pkey -noout -passin pass: -in "${github_app_key_source}" >/dev/null 2>&1 ||
+			die "${github_app_key_source} is not an unencrypted private key (HerdQuay cannot unlock a passphrase)"
+		provision_file "${github_app_key_source}" "${SECRETS_DIR}/github_app_key"
 	fi
 fi
 

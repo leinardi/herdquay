@@ -27,10 +27,12 @@
 # the other is stopped and the container exits non-zero so the orchestrator restarts it. A
 # requested stop (SIGTERM, SIGINT) stops both within HERDQUAY_STOP_TIMEOUT seconds and exits 0.
 # Claude Code itself is installed into the home volume first (herdquay-claude-install;
-# HERDQUAY_CLAUDE_INSTALL=0 skips it). Herdr's native restore resumes the previous run's Claude
-# agents; once Herdr answers, herdquay-agents checks that it did, in the background and
-# unsupervised (a miss is logged, never fatal). HERDQUAY_AGENT_RESTORE=1 makes herdquay-agents resume them itself instead, the fallback
-# for a Herdr release whose headless restore stops working (turn native restore off with it).
+# HERDQUAY_CLAUDE_INSTALL=0 skips it). The Git identity and the GitHub App's configuration for SSH
+# sessions are rewritten in ~/.config/herdquay at every start. Herdr's native restore resumes the
+# previous run's Claude agents; once Herdr answers, herdquay-agents checks that it did, in the
+# background and unsupervised (a miss is logged, never fatal). HERDQUAY_AGENT_RESTORE=1 makes
+# herdquay-agents resume them itself instead, the fallback for a Herdr release whose headless
+# restore stops working (turn native restore off with it).
 
 set -euo pipefail
 
@@ -41,6 +43,7 @@ AUTHORIZED_KEYS_FILE="${HERDQUAY_AUTHORIZED_KEYS_FILE:-/run/secrets/authorized_k
 STATE_DIR="${HOME}/.local/state/herdquay"
 HERDR_DIR="${HOME}/.config/herdr"
 SHARE_DIR=/usr/local/share/herdquay
+HERDQUAY_CONFIG_DIR="${HOME}/.config/herdquay"
 
 log() {
 	printf '%s herdquay: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2
@@ -61,7 +64,7 @@ alive() {
 
 prepare_home() {
 	umask 077
-	mkdir -p "${HOME}/.ssh/host" "${HERDR_DIR}" "${HOME}/.claude" "${HOME}/.config/opencode" "${HOME}/workspace" "${STATE_DIR}"
+	mkdir -p "${HOME}/.ssh/host" "${HERDR_DIR}" "${HOME}/.claude" "${HOME}/.config/opencode" "${HOME}/workspace" "${STATE_DIR}" "${HERDQUAY_CONFIG_DIR}"
 	# sshd's StrictModes refuses a group- or world-writable home or ~/.ssh.
 	chmod go-w "${HOME}"
 	chmod 0700 "${HOME}/.ssh"
@@ -96,21 +99,12 @@ install_authorized_keys() {
 }
 
 # Seeds the configuration once; a file the user already has is never overwritten, except that
-# Claude's settings gain remoteControlAtStartup when the key is absent. The Git identity comes from
-# HERDQUAY_GIT_NAME and HERDQUAY_GIT_EMAIL, and only when ~/.gitconfig has none yet.
+# Claude's settings gain remoteControlAtStartup when the key is absent.
 seed_config() {
 	local settings="${HOME}/.claude/settings.json" tmp
 	if [[ ! -e ${HERDR_DIR}/config.toml ]]; then
 		install -m 0600 "${SHARE_DIR}/herdr-config.toml" "${HERDR_DIR}/config.toml"
 		log "seeded ${HERDR_DIR}/config.toml"
-	fi
-	if [[ -n ${HERDQUAY_GIT_NAME:-} ]] && ! git config --global user.name >/dev/null; then
-		git config --global user.name "${HERDQUAY_GIT_NAME}"
-		log "set the Git user.name"
-	fi
-	if [[ -n ${HERDQUAY_GIT_EMAIL:-} ]] && ! git config --global user.email >/dev/null; then
-		git config --global user.email "${HERDQUAY_GIT_EMAIL}"
-		log "set the Git user.email"
 	fi
 	[[ -s ${settings} ]] || echo '{}' >"${settings}"
 	if ! jq -e 'has("remoteControlAtStartup")' "${settings}" >/dev/null; then
@@ -119,6 +113,63 @@ seed_config() {
 		mv -f "${tmp}" "${settings}"
 		log "enabled Remote Control for every Claude session (${settings})"
 	fi
+}
+
+# The GitHub App's configuration for SSH sessions, which do not inherit this environment: the App
+# ID, key file path and API URL that are set, never the key itself. Rewritten at every start, so a
+# variable removed from the deployment is gone from SSH sessions too.
+write_github_env() {
+	local file="${HERDQUAY_CONFIG_DIR}/github.env" tmp name
+	tmp="$(mktemp "${file}.XXXXXX")"
+	for name in HERDQUAY_GITHUB_APP_ID HERDQUAY_GITHUB_APP_KEY_FILE HERDQUAY_GITHUB_API_URL; do
+		[[ -n ${!name:-} ]] || continue
+		if [[ ${!name} == *$'\n'* ]]; then
+			log "warning: ${name} contains a newline: ignored"
+			continue
+		fi
+		printf '%s=%s\n' "${name}" "${!name}" >>"${tmp}"
+	done
+	mv -f "${tmp}" "${file}"
+}
+
+# The commit identity, rewritten at every start into identity.gitconfig, which /etc/gitconfig
+# includes at the system level (so a user.* in ~/.gitconfig still wins): HERDQUAY_GIT_NAME and
+# HERDQUAY_GIT_EMAIL when both are set, otherwise the GitHub App's bot. When the bot's identity
+# cannot be read (GitHub unreachable), the previous file is kept.
+write_git_identity() {
+	local file="${HERDQUAY_CONFIG_DIR}/identity.gitconfig" tmp name="" email="" source identity status=0
+	if [[ -n ${HERDQUAY_GIT_NAME:-} && -n ${HERDQUAY_GIT_EMAIL:-} ]]; then
+		name="${HERDQUAY_GIT_NAME}"
+		email="${HERDQUAY_GIT_EMAIL}"
+		source="HERDQUAY_GIT_NAME and HERDQUAY_GIT_EMAIL"
+	else
+		if [[ -n ${HERDQUAY_GIT_NAME:-} || -n ${HERDQUAY_GIT_EMAIL:-} ]]; then
+			log "warning: set both HERDQUAY_GIT_NAME and HERDQUAY_GIT_EMAIL, or neither: using the GitHub App's bot"
+		fi
+		identity="$(timeout 10 herdquay-github identity)" || status=$?
+		if ((status == 3)); then
+			rm -f "${file}"
+			log "no Git identity configured (no HERDQUAY_GIT_NAME and HERDQUAY_GIT_EMAIL, no GitHub App)"
+			return 0
+		fi
+		if ((status != 0)); then
+			log "warning: could not read the GitHub App bot's identity (status ${status}): keeping the previous Git identity"
+			return 0
+		fi
+		name="$(sed -n 's/^name=//p' <<<"${identity}")"
+		email="$(sed -n 's/^email=//p' <<<"${identity}")"
+		if [[ -z ${name} || -z ${email} ]]; then
+			log "warning: the GitHub App bot's identity is incomplete: keeping the previous Git identity"
+			return 0
+		fi
+		source="the GitHub App's bot"
+	fi
+	tmp="$(mktemp "${file}.XXXXXX")"
+	printf '# Written by herdquay-entrypoint at every start; edits are lost.\n# source: %s\n' "${source}" >"${tmp}"
+	git config --file "${tmp}" user.name "${name}"
+	git config --file "${tmp}" user.email "${email}"
+	mv -f "${tmp}" "${file}"
+	log "Git identity: ${name} <${email}> (${source})"
 }
 
 wait_for_herdr() {
@@ -160,6 +211,8 @@ main() {
 	ensure_host_key
 	install_authorized_keys
 	seed_config
+	write_github_env
+	write_git_identity
 	# Before the Herdr server starts: its native restore resumes the Claude panes right away. A
 	# failed install is not fatal (the next start retries, herdquay doctor reports it), so a
 	# network outage does not lock the owner out of SSH.

@@ -27,8 +27,8 @@
 # Usage: herdquay doctor [--network]
 #
 # doctor checks the running environment and prints one line per check: ok, warn or FAIL. It exits 1
-# when any check fails. --network adds the checks that reach GitHub (SSH authentication and the
-# token), which need the secrets and outbound access.
+# when any check fails. --network adds the checks that reach GitHub (a GitHub App installation
+# token, gh and Git over HTTPS), which need the App's key and outbound access.
 
 set -euo pipefail
 
@@ -72,8 +72,79 @@ check_secret() {
 	fi
 }
 
+# The GitHub App's configuration as herdquay-github reads it: the environment, else the github.env
+# the entrypoint writes for SSH sessions.
+github_config() {
+	local key value
+	if [[ -r ${HOME}/.config/herdquay/github.env ]]; then
+		while IFS='=' read -r key value; do
+			case "${key}" in
+			HERDQUAY_GITHUB_APP_ID | HERDQUAY_GITHUB_APP_KEY_FILE)
+				[[ -n ${!key:-} ]] || printf -v "${key}" '%s' "${value}"
+				;;
+			esac
+		done <"${HOME}/.config/herdquay/github.env"
+	fi
+	app_id="${HERDQUAY_GITHUB_APP_ID:-}"
+	app_key="${HERDQUAY_GITHUB_APP_KEY_FILE:-/run/secrets/github_app_key}"
+}
+
+# The effective commit identity and where it comes from. A user.* in ~/.gitconfig overrides the
+# identity the entrypoint writes; an older HerdQuay seeded one there, which nothing removes.
+check_git_identity() {
+	local file="${HOME}/.config/herdquay/identity.gitconfig" name email configured_name="" configured_email=""
+	local source="" user_name="" user_email=""
+	name="$(git config user.name || true)"
+	email="$(git config user.email || true)"
+	if [[ -r ${file} ]]; then
+		configured_name="$(git config --file "${file}" user.name || true)"
+		configured_email="$(git config --file "${file}" user.email || true)"
+		source="$(sed -n 's/^# source: //p' "${file}")"
+	fi
+	if [[ -r ${HOME}/.gitconfig ]]; then
+		user_name="$(git config --file "${HOME}/.gitconfig" user.name || true)"
+		user_email="$(git config --file "${HOME}/.gitconfig" user.email || true)"
+	fi
+	if [[ -n ${user_name} || -n ${user_email} ]]; then
+		if [[ -n ${configured_name} ]] &&
+			[[ (-n ${user_name} && ${user_name} != "${configured_name}") || (-n ${user_email} && ${user_email} != "${configured_email}") ]]; then
+			warn "${HOME}/.gitconfig sets user.name/user.email (${user_name:-unset} <${user_email:-unset}>), overriding the configured ${configured_name} <${configured_email}> (${source}); if an older HerdQuay seeded them, remove them: git config --global --unset user.name && git config --global --unset user.email"
+		fi
+		source="${HOME}/.gitconfig"
+	fi
+	if [[ -z ${name} || -z ${email} ]]; then
+		warn "no Git commit identity: set HERDQUAY_GIT_NAME and HERDQUAY_GIT_EMAIL, or configure the GitHub App"
+	else
+		ok "commit identity: ${name} <${email}> (${source:-unknown source})"
+	fi
+}
+
+check_github() {
+	local token status=0 repo out
+	token="$(herdquay-github token 2>&1)" || status=$?
+	if ((status != 0)); then
+		fail "GitHub App installation token: ${token}"
+		return
+	fi
+	ok "GitHub App: installation token minted"
+	if ! repo="$(gh api 'installation/repositories?per_page=1' --jq '.repositories[0].full_name // empty' 2>&1)"; then
+		fail "gh api installation/repositories: ${repo}"
+		return
+	fi
+	if [[ -z ${repo} ]]; then
+		warn "the GitHub App installation has no repository"
+		return
+	fi
+	ok "gh: the installation lists ${repo}"
+	if out="$(GIT_TERMINAL_PROMPT=0 timeout 30 git ls-remote "https://github.com/${repo}.git" HEAD 2>&1)"; then
+		ok "git over HTTPS: ls-remote ${repo}"
+	else
+		fail "git ls-remote https://github.com/${repo}.git: ${out}"
+	fi
+}
+
 doctor() {
-	local network=0 status integrations pinned
+	local network=0 status integrations pinned app_id app_key
 	[[ ${1:-} == --network ]] && network=1
 
 	section "Identity"
@@ -122,8 +193,15 @@ doctor() {
 
 	section "Secrets"
 	check_secret "authorized keys" "${HERDQUAY_AUTHORIZED_KEYS_FILE:-/run/secrets/authorized_keys}" required
-	check_secret "GitHub SSH key" /run/secrets/github_ssh_key optional
-	check_secret "GitHub token" "${HERDQUAY_GITHUB_TOKEN_FILE:-/run/secrets/github_token}" optional
+	github_config
+	check_secret "GitHub App key" "${app_key}" optional
+	if [[ -n ${app_id} && ! -s ${app_key} ]]; then
+		warn "HERDQUAY_GITHUB_APP_ID is set (${app_id}) but the GitHub App key ${app_key} is missing"
+	elif [[ -z ${app_id} && -e ${app_key} ]]; then
+		warn "the GitHub App key ${app_key} is present but HERDQUAY_GITHUB_APP_ID is not set"
+	elif [[ -n ${app_id} ]]; then
+		ok "GitHub App ID: ${app_id}"
+	fi
 	if [[ -n ${DOCKER_HOST:-} ]]; then
 		warn "DOCKER_HOST is set (${DOCKER_HOST}): Docker diagnostics are an opt-in deployment decision"
 	else
@@ -132,6 +210,9 @@ doctor() {
 	if [[ -e /var/run/docker.sock ]]; then
 		fail "/var/run/docker.sock is mounted: HerdQuay must never get the Docker socket"
 	fi
+
+	section "Git"
+	check_git_identity
 
 	section "Tools"
 	check_tool git git --version
@@ -163,18 +244,7 @@ doctor() {
 
 	if ((network)); then
 		section "GitHub"
-		local out
-		out="$(ssh -T -o BatchMode=yes -o ConnectTimeout=10 git@github.com 2>&1 || true)"
-		if grep -q 'successfully authenticated' <<<"${out}"; then
-			ok "SSH: ${out%%!*}"
-		else
-			fail "SSH to github.com: ${out}"
-		fi
-		if gh auth status >/dev/null 2>&1; then
-			ok "gh: $(gh api user --jq .login 2>/dev/null || echo authenticated)"
-		else
-			fail "gh is not authenticated (token file missing or rejected)"
-		fi
+		check_github
 	fi
 
 	printf '\n%d failure(s), %d warning(s)\n' "${failures}" "${warnings}"

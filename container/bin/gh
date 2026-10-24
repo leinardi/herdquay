@@ -22,19 +22,29 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-# gh with HerdQuay's GitHub token: read from the secret file (HERDQUAY_GITHUB_TOKEN_FILE, default
-# /run/secrets/github_token) into GH_TOKEN for this one process, so the token is never written to
-# gh's hosts.yml or exported to every shell. An explicit GH_TOKEN or GITHUB_TOKEN wins. Git's HTTPS
-# credential helper calls this wrapper too (/etc/gitconfig).
+# gh with a GitHub App installation token (herdquay-github token, valid for every repository of the
+# installation) in GH_TOKEN for this one process, so no token is ever written to gh's hosts.yml or
+# exported to every shell. An explicit GH_TOKEN or GITHUB_TOKEN wins. Without a configured App, gh
+# runs unauthenticated; endpoints that need a user (gh api user) never work with an App token.
 
 set -euo pipefail
 
-token_file="${HERDQUAY_GITHUB_TOKEN_FILE:-/run/secrets/github_token}"
-if [[ -z ${GH_TOKEN:-} && -z ${GITHUB_TOKEN:-} && -r ${token_file} ]]; then
-	token="$(<"${token_file}")"
-	token="${token//[[:space:]]/}"
-	if [[ -n ${token} ]]; then
-		export GH_TOKEN="${token}"
+case "${1:-}" in
+# Nothing to authenticate: no token is minted, so these work offline.
+"" | --version | version | help | --help | completion) ;;
+*)
+	if [[ -z ${GH_TOKEN:-} && -z ${GITHUB_TOKEN:-} ]]; then
+		status=0
+		errors="$(mktemp)"
+		token="$(/usr/local/bin/herdquay-github token 2>"${errors}")" || status=$?
+		if ((status == 0)) && [[ -n ${token} ]]; then
+			export GH_TOKEN="${token}"
+		elif ((status != 3)); then
+			# A configured App that could not mint a token: say why, then let gh report its own error.
+			cat "${errors}" >&2
+		fi
+		rm -f "${errors}"
 	fi
-fi
+	;;
+esac
 exec /opt/gh/bin/gh "$@"

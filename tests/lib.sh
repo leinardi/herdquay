@@ -22,8 +22,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-# Shared helpers for the image tests: a scratch secrets directory, a throwaway SSH client key, and
-# a container started the way the harness and the deployment run it (all capabilities dropped,
+# Shared helpers for the image tests: a scratch secrets directory, a throwaway SSH client key and
+# GitHub App key, and a container started the way the harness and the deployment run it (all capabilities dropped,
 # no-new-privileges, /tmp as an exec tmpfs, secrets bind-mounted as files). Sourced, not run.
 
 # shellcheck disable=SC2034 # the variables are for the scripts that source this file
@@ -33,6 +33,12 @@ TEST_ID="hq-test-$$"
 SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/herdquay-test.XXXXXX")"
 CLIENT_KEY="${SCRATCH}/client_ed25519"
 KNOWN_HOSTS="${SCRATCH}/known_hosts"
+# The throwaway App key's public half, for the stub GitHub API (tests/github-stub.py).
+APP_PUBLIC_KEY="${SCRATCH}/github_app_key.pub.pem"
+APP_ID=12345
+# Where the smoke test's stub API listens inside the container; elsewhere nothing does, so the
+# entrypoint's App bot lookup fails fast instead of reaching the real GitHub.
+STUB_API_URL="http://127.0.0.1:18080"
 export HERDQUAY_SECRETS_DIR="${SCRATCH}/secrets"
 
 containers=()
@@ -53,20 +59,33 @@ die() {
 	exit 1
 }
 
-# Real key files, provisioned with the same ACL script the harness uses.
+# Real key files, provisioned with the same ACL script the harness uses. The App key is a throwaway
+# RSA key: only the stub API trusts it.
 make_secrets() {
 	ssh-keygen -q -t ed25519 -N '' -C herdquay-test-client -f "${CLIENT_KEY}"
-	ssh-keygen -q -t ed25519 -N '' -C herdquay-test-github -f "${SCRATCH}/github_ssh_key"
-	printf 'github_pat_test_token\n' >"${SCRATCH}/github_token"
+	openssl genpkey -quiet -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "${SCRATCH}/github_app_key"
+	openssl pkey -in "${SCRATCH}/github_app_key" -pubout -out "${APP_PUBLIC_KEY}"
+	chmod 0644 "${APP_PUBLIC_KEY}"
 	"${REPO_ROOT}/scripts/local-secrets.sh" --authorized-keys "${CLIENT_KEY}.pub" \
-		--github-ssh-key "${SCRATCH}/github_ssh_key" --github-token-file "${SCRATCH}/github_token" >/dev/null
-	rm -f "${SCRATCH}/github_ssh_key" "${SCRATCH}/github_ssh_key.pub" "${SCRATCH}/github_token"
+		--github-app-key "${SCRATCH}/github_app_key" >/dev/null
+	rm -f "${SCRATCH}/github_app_key"
 }
 
-# start_container <name> <home-volume> [docker run options...]: prints nothing, records the name.
+# start_container <name> <home-volume> [docker run options...] [-- command...]: prints nothing,
+# records the name. A command after -- replaces the image's default arguments.
 start_container() {
 	local name="$1" volume="$2"
+	local -a options=() arguments=()
 	shift 2
+	while [[ $# -gt 0 ]]; do
+		if [[ $1 == -- ]]; then
+			shift
+			arguments=("$@")
+			break
+		fi
+		options+=("$1")
+		shift
+	done
 	containers+=("${name}")
 	volumes+=("${volume}")
 	docker run -d --name "${name}" \
@@ -75,11 +94,12 @@ start_container() {
 		-p 127.0.0.1::2222 \
 		-v "${volume}:/home/herdquay" \
 		-v "${HERDQUAY_SECRETS_DIR}/authorized_keys:/run/secrets/authorized_keys:ro" \
-		-v "${HERDQUAY_SECRETS_DIR}/github_ssh_key:/run/secrets/github_ssh_key:ro" \
-		-v "${HERDQUAY_SECRETS_DIR}/github_token:/run/secrets/github_token:ro" \
+		-v "${HERDQUAY_SECRETS_DIR}/github_app_key:/run/secrets/github_app_key:ro" \
+		-e HERDQUAY_GITHUB_APP_ID="${APP_ID}" \
+		-e HERDQUAY_GITHUB_API_URL="${STUB_API_URL}" \
 		-e HERDQUAY_STOP_TIMEOUT="${HERDQUAY_STOP_TIMEOUT:-5}" \
 		-e HERDQUAY_CLAUDE_INSTALL="${HERDQUAY_CLAUDE_INSTALL:-1}" \
-		"$@" "${IMAGE}" >/dev/null
+		"${options[@]}" "${IMAGE}" "${arguments[@]}" >/dev/null
 }
 
 wait_healthy() {

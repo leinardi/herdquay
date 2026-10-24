@@ -1,11 +1,17 @@
-# System Git configuration for HerdQuay. The user's identity goes in ~/.gitconfig
-# (HERDQUAY_GIT_NAME / HERDQUAY_GIT_EMAIL, seeded once by the entrypoint).
+# System Git configuration for HerdQuay. The commit identity is written at every start to
+# ~/.config/herdquay/identity.gitconfig (HERDQUAY_GIT_NAME / HERDQUAY_GIT_EMAIL, else the GitHub
+# App's bot), included below; a user.name or user.email in ~/.gitconfig still overrides it.
 [init]
 	defaultBranch = main
 [credential "https://github.com"]
-	# HTTPS remotes authenticate with the same fine-grained token gh uses.
+	# A GitHub App installation token restricted to the one repository (herdquay-github), which is
+	# why the helper needs the path.
 	helper =
-	helper = !/usr/local/bin/gh auth git-credential
-[credential "https://gist.github.com"]
-	helper =
-	helper = !/usr/local/bin/gh auth git-credential
+	helper = !/usr/local/bin/herdquay-github git-credential
+	useHttpPath = true
+# GitHub over HTTPS only: SSH remotes and clone URLs are rewritten, there is no SSH key for GitHub.
+[url "https://github.com/"]
+	insteadOf = git@github.com:
+	insteadOf = ssh://git@github.com/
+[include]
+	path = ~/.config/herdquay/identity.gitconfig
