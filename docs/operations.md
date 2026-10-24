@@ -192,6 +192,35 @@ it reports can be resumed by hand with `claude --resume <id>` in its directory.
 Running commands, dev servers and shells do not survive a restart: only the layout and the Claude
 conversations do.
 
+## Dotfiles with chezmoi
+
+`chezmoi` is in the image, so personal dotfiles (shell, editor, Claude Code and opencode settings)
+can be applied to the home volume, where they persist like the rest of it:
+
+```bash
+chezmoi init --apply https://github.com/<owner>/<dotfiles>.git
+```
+
+The clone goes through the GitHub App, so a private dotfiles repository works if the App is
+installed on it. `chezmoi update` pulls and applies later changes. A template or
+`.chezmoiignore` can branch on the hostname (`herdquay` in the local harness; the deployment sets
+its own) to keep desktop-only files out.
+
+Some files in the home volume belong to HerdQuay, and must not be managed whole:
+
+| Path | Why |
+| --- | --- |
+| `~/.ssh/authorized_keys`, `~/.ssh/host/` | rebuilt from the secret at every start; the SSH host key |
+| `~/.ssh/config` | GitHub is reached over HTTPS with App tokens; a desktop config's keys and hosts do not apply |
+| `~/.gitconfig` | the identity, credential helper and HTTPS rewrites come from the image (`/etc/gitconfig`, `~/.config/herdquay/identity.gitconfig`): a `user.*`, `credential.*`, `url.*.insteadOf` or signing setting there overrides them |
+| `~/.claude/settings.json` | HerdQuay adds `remoteControlAtStartup`, and Herdr its `SessionStart` hook, at every start: merge with a `modify_` script instead of replacing the file |
+| `~/.config/opencode/` | Herdr's opencode plugin is installed there at every start |
+| `~/.config/herdr/config.toml` | `resume_agents_on_restore` drives the session restore |
+| `~/.config/herdquay/` | rewritten at every start |
+
+Keep secrets and password-manager templates out of the HerdQuay profile, and any setting that
+turns off Claude Code's or opencode's updates (`DISABLE_AUTOUPDATER`, `autoupdate`).
+
 ## Checking the environment
 
 ```bash

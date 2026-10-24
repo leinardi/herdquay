@@ -31,7 +31,7 @@ Next to Claude Code, the image has opencode 2.1.4 as a minimum: it is copied int
 `~/.opencode/bin` and updates itself from there, like Claude Code
 ([operations.md](operations.md#claude-code-at-first-start)).
 
-It also has the CLI tools an agent or a GitHub runner usually has: `gh`, `jq`, `yq`,
+It also has the CLI tools an agent or a GitHub runner usually has: `gh`, `chezmoi`, `jq`, `yq`,
 `rg`, `fd`, `tree`, `wget`, `zip`/`unzip`/`xz`/`zstd`, `rsync`, `file`, `bc`, `gawk`, `sqlite3`,
 `dig`, `nc`, `ping`, `lsof`, `htop`, `strace`, `openssl`, `gpg`, `git-lfs`, `vim`, `nano`,
 `patch`.

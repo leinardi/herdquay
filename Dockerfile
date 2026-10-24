@@ -70,6 +70,8 @@ RUN curl -fsSL -o /tmp/node.tar.xz \
 
 # Release binaries, each checked against its GitHub release asset digest
 # (gh api repos/<owner>/<repo>/releases/tags/<tag>).
+ARG CHEZMOI_VERSION=2.73.3
+ARG CHEZMOI_SHA256=56db674bb755c6655d67df3dec3e6727631d1291f5fc799d3f1aded6d0e56472
 ARG GH_VERSION=2.103.0
 ARG GH_SHA256=fdd768eb70f6409f80fcfa9f3a1c0adf0fc98d827ab3ce0bed2ac22762c5d786
 ARG GOLANGCI_LINT_VERSION=2.14.0
@@ -103,7 +105,10 @@ RUN fetch() { curl -fsSL -o "$1" "$2" && echo "$3  $1" | sha256sum --check --str
 	&& fetch /usr/local/bin/yq \
 		"https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" \
 		"${YQ_SHA256}" \
-	&& chmod 0755 /usr/local/bin/hadolint /usr/local/bin/yq \
+	&& fetch /usr/local/bin/chezmoi \
+		"https://github.com/twpayne/chezmoi/releases/download/v${CHEZMOI_VERSION}/chezmoi-linux-amd64" \
+		"${CHEZMOI_SHA256}" \
+	&& chmod 0755 /usr/local/bin/hadolint /usr/local/bin/yq /usr/local/bin/chezmoi \
 	&& rm -rf /tmp/*
 
 # opencode 2 ships only on npm, as one package per platform (what https://opencode.ai/v2/install
@@ -209,6 +214,7 @@ COPY --from=fetch /usr/local/go /usr/local/go
 COPY --from=fetch /opt/node /opt/node
 COPY --from=fetch /opt/gh /opt/gh
 COPY --from=fetch \
+	/usr/local/bin/chezmoi \
 	/usr/local/bin/herdr \
 	/usr/local/bin/golangci-lint \
 	/usr/local/bin/goreleaser \
