@@ -7,8 +7,11 @@ reach, what protects the rest, and which risks are accepted on purpose.
 ## Boundaries
 
 - **No root at run time.** Every process, sshd included, runs as UID 568. sshd runs without PAM
-  and can only log in its own user. There is no sudo, no setuid helper the image relies on, and
-  the harness drops every capability (`cap_drop: ALL`, `no-new-privileges`).
+  and can only log in its own user. There is no sudo, and the image carries no setuid or setgid
+  binary and no file capability (they are stripped at build time, and the smoke test checks it),
+  so nothing can raise a process's privileges even where `no-new-privileges` is not applied:
+  Docker Swarm ignores `security_opt`. Every capability is dropped (`cap_drop: ALL`, which Swarm
+  honours), and the harness adds `no-new-privileges` too.
 - **No Docker socket**, no read-write Docker API, no host filesystem mount. The Docker CLI is
   installed but has no daemon ([docker-diagnostics.md](docker-diagnostics.md)).
 - **SSH**: keys only, one user, the authorized keys rebuilt from a secret on every start (removing
@@ -22,8 +25,8 @@ reach, what protects the rest, and which risks are accepted on purpose.
 | --- | --- | --- |
 | Authorized SSH keys | `/run/secrets/authorized_keys` | public keys; UID 568 |
 | GitHub App private key | `/run/secrets/github_app_key` | UID 568 |
-| GitHub installation tokens (one hour) | `/tmp/herdquay-github` (tmpfs, directory 0700, files 0600) | UID 568 |
-| Git signing key (optional) | `/run/secrets/git_signing_key`; imported into `/tmp/herdquay-gnupg` (tmpfs, 0700) | UID 568 |
+| GitHub installation tokens (one hour) | `/dev/shm/herdquay-github` (RAM, directory 0700, files 0600) | UID 568 |
+| Git signing key (optional) | `/run/secrets/git_signing_key`; imported into `/dev/shm/herdquay-gnupg` (RAM, 0700) | UID 568 |
 | Claude login | `~/.claude/.credentials.json` (0600) on the home volume | UID 568 |
 | opencode provider logins | `~/.local/share/opencode/auth.json` on the home volume | UID 568 |
 | SSH host key | `~/.ssh/host/` (0600) on the home volume | UID 568 |
@@ -83,7 +86,10 @@ reach, what protects the rest, and which risks are accepted on purpose.
   process could already act as the user in every other way; the install is verified when it is
   made, and a new pin or the removal of `~/.local/share/claude` reinstalls it.
 - **`/tmp` allows execution.** Toolchains (`go test`, Playwright, pre-commit) run binaries from
-  `/tmp`, so its tmpfs is mounted `exec` (still `nosuid,nodev`).
+  `/tmp`, so the harness mounts it as an `exec` tmpfs (still `nosuid,nodev`). Docker Swarm cannot
+  mount an `exec` tmpfs, so there `/tmp` stays on the container's writable layer, on disk, cleared
+  when the task is replaced. No credential lives in `/tmp`: the token cache and the signing keyring
+  are in `/dev/shm`, the container's own RAM tmpfs, under every orchestrator.
 
 ## Supply chain
 

@@ -97,6 +97,12 @@ in_ssh "${TEST_ID}" 'herdquay doctor' >"${SCRATCH}/doctor.txt" || {
 }
 pass "herdquay doctor: $(tail -n 1 "${SCRATCH}/doctor.txt")"
 
+# Swarm ignores no-new-privileges, so nothing in the image may raise privileges in its place.
+privileged="$(docker run --rm --entrypoint bash "${IMAGE}" -c \
+	'find / -xdev -type f \( -perm -4000 -o -perm -2000 \) 2>/dev/null; getcap -r / 2>/dev/null')"
+[[ -z ${privileged} ]] || die "setuid, setgid or file-capability binaries in the image: ${privileged}"
+pass "no setuid, setgid or file-capability binary in the image"
+
 root="$(docker exec "${TEST_ID}" ps -o user= -e | sort -u | tr '\n' ' ')"
 [[ ${root} == "herdquay " ]] || die "processes run as: ${root}"
 pass "every process runs as herdquay"
@@ -108,11 +114,11 @@ token="$(sed -n 's/^password=//p' <<<"${out}")"
 [[ $(mints "${TEST_ID}" | jq -c '.[0].repositories') == '["r"]' ]] || die "the token was not restricted to the repository r"
 [[ $(password "${TEST_ID}" o/r.git) == "${token}" && $(mint_count "${TEST_ID}") == 1 ]] ||
 	die "the second credential fill was not served from the cache"
-[[ $(in_ssh "${TEST_ID}" 'stat -c %a /tmp/herdquay-github; stat -c %a /tmp/herdquay-github/* | sort -u') == $'700\n600' ]] ||
-	die "the token cache is not a 0700 directory of 0600 files"
+[[ $(in_ssh "${TEST_ID}" 'stat -c %a /dev/shm/herdquay-github; stat -c %a /dev/shm/herdquay-github/* | sort -u') == $'700\n600' ]] ||
+	die "the token cache is not a 0700 directory of 0600 files in /dev/shm"
 in_ssh "${TEST_ID}" "! grep -rqsF '${token}' ~/.config ~/.local/state ~/.cache ~/.gitconfig" ||
 	die "a token reached the home volume"
-pass "git HTTPS: per-repository App token, cached on tmpfs (0600), one mint"
+pass "git HTTPS: per-repository App token, cached in /dev/shm (0600), one mint"
 
 all="$(in_ssh "${TEST_ID}" 'gh auth token')"
 [[ ${all} == "$(mints "${TEST_ID}" | jq -r '.[-1].token')" && $(mints "${TEST_ID}" | jq -c '.[-1].repositories') == null ]] ||
@@ -182,7 +188,7 @@ pass "no GitHub SSH key, config or host keys; no Gist credential helper"
 
 eval "$(ssh-agent -s)" >/dev/null
 ssh-add -q "${CLIENT_KEY}"
-in_ssh "${TEST_ID}" 'ssh-add -l' -A | grep -q herdquay-test-client || die "agent forwarding does not work"
+grep -q herdquay-test-client <<<"$(in_ssh "${TEST_ID}" 'ssh-add -l' -A)" || die "agent forwarding does not work"
 pass "agent forwarding for manual SSH sessions"
 
 for secret in authorized_keys github_app_key git_signing_key; do
@@ -222,8 +228,8 @@ pass "no signing key: commits unsigned, doctor reports signing off"
 pinned="$(docker exec "${TEST_ID}-2" sed -n 's/^HERDQUAY_CLAUDE_VERSION=//p' /usr/local/share/herdquay/claude-release)"
 [[ $(in_ssh "${TEST_ID}-2" 'readlink -f ~/.local/bin/claude') == "/home/herdquay/.local/share/claude/versions/${pinned}" ]] ||
 	die "the claude link is not the pinned ${pinned}"
-in_ssh "${TEST_ID}-2" 'claude --version' | grep -qF "${pinned}" || die "claude --version is not ${pinned}"
-docker logs "${TEST_ID}-2" 2>&1 | grep -q "Claude Code ${pinned} already installed" ||
+grep -qF "${pinned}" <<<"$(in_ssh "${TEST_ID}-2" 'claude --version')" || die "claude --version is not ${pinned}"
+grep -q "Claude Code ${pinned} already installed" <<<"$(docker logs "${TEST_ID}-2" 2>&1)" ||
 	die "the recreated container downloaded Claude Code again"
 docker run --rm --entrypoint bash "${IMAGE}" -c 'test ! -e /usr/local/bin/claude && ! command -v claude' >/dev/null ||
 	die "the image itself ships a claude binary"

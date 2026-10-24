@@ -24,7 +24,7 @@
 #
 # Shared helpers for the image tests: a scratch secrets directory, a throwaway SSH client key,
 # GitHub App key and GPG signing key, and a container started the way the harness and the
-# deployment run it (all capabilities dropped, no-new-privileges, /tmp as an exec tmpfs, secrets
+# harness runs it (all capabilities dropped, no-new-privileges, /tmp as an exec tmpfs, secrets
 # bind-mounted as files). Sourced, not run.
 
 # shellcheck disable=SC2034 # the variables are for the scripts that source this file

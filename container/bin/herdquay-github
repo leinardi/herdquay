@@ -24,7 +24,7 @@
 # SOFTWARE.
 #
 # HerdQuay's GitHub App credentials. The only long-lived secret is the App's private key; this
-# mints short-lived installation tokens from it (one hour, GitHub's limit) and caches them on tmpfs.
+# mints short-lived installation tokens from it (one hour, GitHub's limit) and caches them in RAM.
 # Adapted from rozsival/devbox's devbox-git-credential (MIT).
 #
 # Usage: herdquay-github git-credential get|store|erase   Git's credential helper protocol
@@ -43,8 +43,9 @@
 #   HERDQUAY_GITHUB_APP_KEY_FILE  the App's private key (default /run/secrets/github_app_key)
 #   HERDQUAY_GITHUB_API_URL       the REST API (default https://api.github.com)
 #
-# The cache lives in /tmp/herdquay-github (directory 0700, files 0600, written atomically); nothing
-# reaches the home volume. Every key is a SHA-256 of the API URL, the App ID, the installation id
+# The cache lives in /dev/shm/herdquay-github (directory 0700, files 0600, written atomically):
+# /dev/shm is the container's own RAM tmpfs under every orchestrator, unlike /tmp, which Swarm leaves
+# on disk. Nothing reaches the home volume. Every key is a SHA-256 of the API URL, the App ID, the installation id
 # and the repository (* for installation-wide), so a changed App, API or installation never reuses
 # a token minted for the old one; a token is reused until five minutes before it expires.
 #
@@ -56,7 +57,7 @@ set -euo pipefail
 shopt -s inherit_errexit
 
 ENV_FILE="${HOME}/.config/herdquay/github.env"
-CACHE_DIR="/tmp/herdquay-github"
+CACHE_DIR="/dev/shm/herdquay-github"
 # Seconds before expires_at from which a cached token is minted again.
 REFRESH_WINDOW=300
 

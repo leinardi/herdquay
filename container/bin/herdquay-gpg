@@ -24,8 +24,8 @@
 #
 # gpg for Git's commit and tag signatures (gpg.program), with the signing key from the secret file
 # HERDQUAY_GIT_SIGNING_KEY_FILE (default /run/secrets/git_signing_key): an armored secret key
-# without a passphrase. The keyring lives in /tmp/herdquay-gnupg (tmpfs, 0700), so the key never
-# reaches the home volume, and ~/.gnupg is never used. It is imported on first use and rebuilt from
+# without a passphrase. The keyring lives in /dev/shm/herdquay-gnupg (0700), the container's own RAM
+# tmpfs under every orchestrator, so the key never reaches a disk, and ~/.gnupg is never used. It is imported on first use and rebuilt from
 # scratch whenever the SHA-256 of the file's content differs from the one recorded at the last
 # import: a renewed expiry or an added subkey keeps the primary fingerprint, so the fingerprint
 # alone would miss them. With no key file the keyring is empty. Every argument goes to gpg.
@@ -37,8 +37,8 @@
 set -euo pipefail
 shopt -s inherit_errexit
 
-GNUPG_DIR=/tmp/herdquay-gnupg
-LOCK_FILE=/tmp/herdquay-gnupg.lock
+GNUPG_DIR=/dev/shm/herdquay-gnupg
+LOCK_FILE=/dev/shm/herdquay-gnupg.lock
 ENV_FILE="${HOME}/.config/herdquay/github.env"
 
 die() {
