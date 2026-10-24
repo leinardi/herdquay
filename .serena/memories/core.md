@@ -13,7 +13,7 @@ Source map:
 Invariants:
 - No secret ever in image, build args, labels, env vars or Git; secrets only as files under `/run/secrets/` at run time.
 - No root at run time; everything runs as UID:GID 568:568. No Docker socket, never a read-write Docker API.
-- GitHub over HTTPS only via a GitHub App; no SSH key/ssh_config for GitHub. Tokens cached only in `/tmp` (tmpfs).
+- GitHub over HTTPS only via a GitHub App; no SSH key/ssh_config for GitHub. Token cache and GPG keyring only in `/dev/shm` (RAM under every orchestrator; Swarm leaves `/tmp` on disk and ignores `no-new-privileges`, so the image carries no setuid/setgid/file-cap binary).
 - SSH sessions do not inherit the container env: the entrypoint writes `~/.config/herdquay/github.env` (paths/IDs, never keys) at every start; scripts fall back to it.
 - Every download pinned and verified (checksum/signature).
 
