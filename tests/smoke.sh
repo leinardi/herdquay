@@ -25,7 +25,8 @@
 # Smoke test of a built image: SSH as the unprivileged user, the doctor, the pinned tools, the
 # GitHub App credentials against a stub API (tests/github-stub.py, on the container's loopback),
 # the commit identity, agent forwarding, secret permissions, and persistence of the host key and
-# home across container recreation. Needs no real credentials.
+# home across container recreation, and GPG commit signing (only for the custom identity, renewed
+# keys picked up). Needs no real credentials.
 #
 # Usage: tests/smoke.sh   (HERDQUAY_IMAGE selects the image, default herdquay:local)
 
@@ -72,8 +73,18 @@ mint_count() {
 	mints "$@" | jq length
 }
 
+SIGNING_KEY_MOUNT="${HERDQUAY_SECRETS_DIR}/git_signing_key:/run/secrets/git_signing_key:ro"
+
+# commit <name> [git command...]: an empty commit in a new repository, then the command (default:
+# print the raw commit object).
+commit() {
+	local name="$1"
+	shift
+	in_ssh "${name}" "cd \"\$(mktemp -d)\" && git init -q && git commit -q --allow-empty -m probe && ${*:-git cat-file commit HEAD}"
+}
+
 make_secrets
-start_with_stub "${TEST_ID}" "${TEST_ID}-home"
+start_with_stub "${TEST_ID}" "${TEST_ID}-home" -v "${SIGNING_KEY_MOUNT}"
 wait_healthy "${TEST_ID}"
 pass "container healthy"
 
@@ -119,6 +130,16 @@ pass "SSH GitHub URLs rewritten to HTTPS"
 	die "the commit identity is not the App bot: $(in_ssh "${TEST_ID}" 'git var GIT_AUTHOR_IDENT')"
 pass "commit identity: the App bot without HERDQUAY_GIT_NAME/EMAIL"
 
+# Captured first: a failed commit stops the test here instead of reading as unsigned.
+out="$(commit "${TEST_ID}")"
+grep -q '^tree ' <<<"${out}" || die "no commit was made: ${out}"
+grep -q '^gpgsig' <<<"${out}" && die "a commit by the App bot was signed"
+[[ -z $(in_ssh "${TEST_ID}" 'git config commit.gpgsign; git config tag.gpgsign' || true) ]] ||
+	die "gpgsign is configured for the App bot"
+grep -q '^  warn  commit signing off: .* is ignored, the identity is the GitHub App' <<<"$(in_ssh "${TEST_ID}" 'herdquay doctor')" ||
+	die "herdquay doctor does not warn about a signing key ignored for the App bot"
+pass "signing key with the App bot: ignored, commits unsigned, doctor warns"
+
 count="$(mint_count "${TEST_ID}")"
 in_ssh "${TEST_ID}" 'cp ~/.config/herdquay/github.env /tmp/github.env.orig &&
 	sed -i "s/^HERDQUAY_GITHUB_APP_ID=.*/HERDQUAY_GITHUB_APP_ID=67890/" ~/.config/herdquay/github.env'
@@ -152,7 +173,7 @@ if out="$(fill "${TEST_ID}" o/missing.git 2>&1)" || ! grep -q 'not installed on 
 fi
 pass "a repository without the App fails clearly"
 
-in_ssh "${TEST_ID}" 'ssh -G github.com' | grep -q github_ssh_key && die "ssh still uses the old GitHub key for github.com"
+grep -q github_ssh_key <<<"$(in_ssh "${TEST_ID}" 'ssh -G github.com')" && die "ssh still uses the old GitHub key for github.com"
 in_ssh "${TEST_ID}" 'test ! -e /etc/ssh/ssh_config.d/herdquay.conf && test ! -e /etc/ssh/ssh_known_hosts' ||
 	die "the GitHub SSH client configuration is still shipped"
 in_ssh "${TEST_ID}" "git config --system --get-regexp '^credential\\.https://gist\\.github\\.com'" &&
@@ -164,7 +185,7 @@ ssh-add -q "${CLIENT_KEY}"
 in_ssh "${TEST_ID}" 'ssh-add -l' -A | grep -q herdquay-test-client || die "agent forwarding does not work"
 pass "agent forwarding for manual SSH sessions"
 
-for secret in authorized_keys github_app_key; do
+for secret in authorized_keys github_app_key git_signing_key; do
 	# bash's test, not /usr/bin/test: Ubuntu 26.04's Rust coreutils ignore ACLs in test -r.
 	docker exec "${TEST_ID}" bash -c "test -r /run/secrets/${secret}" || die "568 cannot read ${secret}"
 	if docker run --rm --user 4242:4242 --entrypoint cat \
@@ -190,6 +211,13 @@ pass "recreation keeps the host key, home, workspace and configuration"
 [[ $(in_ssh "${TEST_ID}-2" 'git var GIT_AUTHOR_IDENT' | sed 's/> .*/>/') == 'HerdQuay Test <test@example.invalid>' ]] ||
 	die "HERDQUAY_GIT_NAME/EMAIL are not the commit identity"
 pass "commit identity: HERDQUAY_GIT_NAME and HERDQUAY_GIT_EMAIL"
+
+out="$(commit "${TEST_ID}-2")"
+grep -q '^tree ' <<<"${out}" || die "no commit was made: ${out}"
+grep -q '^gpgsig' <<<"${out}" && die "a commit was signed without a signing key"
+grep -q '^  ok    commit signing off (no signing key' <<<"$(in_ssh "${TEST_ID}-2" 'herdquay doctor')" ||
+	die "herdquay doctor does not report signing off"
+pass "no signing key: commits unsigned, doctor reports signing off"
 
 pinned="$(docker exec "${TEST_ID}-2" sed -n 's/^HERDQUAY_CLAUDE_VERSION=//p' /usr/local/share/herdquay/claude-release)"
 [[ $(in_ssh "${TEST_ID}-2" 'readlink -f ~/.local/bin/claude') == "/home/herdquay/.local/share/claude/versions/${pinned}" ]] ||
@@ -223,5 +251,35 @@ in_ssh "${TEST_ID}-3" 'herdquay doctor' >"${SCRATCH}/doctor.txt" || {
 grep -q '^  warn  .*gitconfig.*git config --global --unset user.name' "${SCRATCH}/doctor.txt" ||
 	die "herdquay doctor does not warn about the seeded ~/.gitconfig identity"
 pass "an older home keeps its seeded identity, untouched; the doctor warns with the cleanup"
+
+in_ssh "${TEST_ID}-3" 'git config --global --unset user.name && git config --global --unset user.email'
+docker rm -f "${TEST_ID}-3" >/dev/null
+start_with_stub "${TEST_ID}-4" "${TEST_ID}-home" -v "${SIGNING_KEY_MOUNT}" \
+	-e HERDQUAY_GIT_NAME="HerdQuay Test" -e HERDQUAY_GIT_EMAIL=test@example.invalid
+wait_healthy "${TEST_ID}-4"
+grep -q '^gpgsig' <<<"$(commit "${TEST_ID}-4")" || die "a commit with the signing key is not signed"
+grep -qF "${SIGNING_UID}" <<<"$(commit "${TEST_ID}-4" 'git verify-commit HEAD 2>&1')" || die "git verify-commit failed"
+in_ssh "${TEST_ID}-4" 'test ! -e ~/.gnupg' || die "a .gnupg directory was created on the home volume"
+in_ssh "${TEST_ID}-4" 'herdquay doctor' >"${SCRATCH}/doctor.txt" || {
+	cat "${SCRATCH}/doctor.txt" >&2
+	die "herdquay doctor failed with the signing key"
+}
+if ! grep -q "^  ok    commit signing on: ${SIGNING_FINGERPRINT}, expires " "${SCRATCH}/doctor.txt" ||
+	! grep -q "^  ok    test signature with ${SIGNING_FINGERPRINT}" "${SCRATCH}/doctor.txt" ||
+	grep -q 'no UID of the signing key matches' "${SCRATCH}/doctor.txt"; then
+	die "herdquay doctor does not report signing on: $(grep -i sign "${SCRATCH}/doctor.txt")"
+fi
+pass "signing key with HERDQUAY_GIT_NAME/EMAIL: commits signed and verified, no ~/.gnupg, doctor ok"
+
+# Renewal: the same key with a later expiry, written over the secret in place (as a rotated secret
+# file appears); the primary fingerprint does not change, the key data does.
+GNUPGHOME="${SIGNING_GNUPG}" gpg --batch --quiet --quick-set-expire "${SIGNING_FINGERPRINT}" 2y 2>/dev/null
+expiry="$(GNUPGHOME="${SIGNING_GNUPG}" gpg --batch --with-colons --list-keys "${SIGNING_FINGERPRINT}" 2>/dev/null |
+	awk -F: '$1 == "pub" { print $7; exit }')"
+GNUPGHOME="${SIGNING_GNUPG}" gpg --batch --armor --export-secret-keys >"${HERDQUAY_SECRETS_DIR}/git_signing_key"
+commit "${TEST_ID}-4" 'git verify-commit HEAD' 2>/dev/null || die "the commit after renewal does not verify"
+[[ $(in_ssh "${TEST_ID}-4" "herdquay-gpg --batch --with-colons --list-keys ${SIGNING_FINGERPRINT}" |
+	awk -F: '$1 == "pub" { print $7; exit }') == "${expiry}" ]] || die "herdquay-gpg did not pick up the renewed key"
+pass "renewed signing key (same fingerprint, new expiry) used for the next commit"
 
 echo "smoke: all checks passed"

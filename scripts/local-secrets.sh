@@ -32,15 +32,20 @@
 # entry turns the group mode bits into the ACL mask, so ls and stat show 0640 even though the
 # owning group gets nothing: the check below reads the effective ACL instead of the mode bits.
 #
-# Usage: scripts/local-secrets.sh [--authorized-keys <file>] [--github-app-key <pem>] [--check]
+# Usage: scripts/local-secrets.sh [--authorized-keys <file>] [--github-app-key <pem>]
+#                                 [--git-signing-key <file>] [--check]
 #   --authorized-keys  the public key(s) allowed to SSH in (default: the first of
 #                      ~/.ssh/id_ed25519.pub, id_ecdsa.pub, id_rsa.pub)
 #   --github-app-key   the GitHub App's private key, as downloaded from the App's settings
 #                      (optional)
+#   --git-signing-key  an armored GPG secret key without a passphrase, to sign commits and tags as
+#                      HERDQUAY_GIT_NAME / HERDQUAY_GIT_EMAIL (optional)
 #   --check            only verify the existing files
 #
 # The GitHub App key is optional: compose.github.yaml mounts it with HERDQUAY_GITHUB_APP_ID, and
-# make compose-up adds that file only when local/secrets/github_app_key exists.
+# make compose-up adds that file only when local/secrets/github_app_key exists. The signing key is
+# optional too: compose.github.yaml mounts it when local/secrets/git_signing_key exists, so only
+# together with the App key.
 
 set -euo pipefail
 
@@ -48,6 +53,7 @@ CONTAINER_UID="${HERDQUAY_UID:-568}"
 SECRETS_DIR="${HERDQUAY_SECRETS_DIR:-$(git rev-parse --show-toplevel)/local/secrets}"
 authorized_keys_source=""
 github_app_key_source=""
+git_signing_key_source=""
 check_only=0
 
 die() {
@@ -67,6 +73,11 @@ while [[ $# -gt 0 ]]; do
 		github_app_key_source="$2"
 		shift 2
 		;;
+	--git-signing-key)
+		[[ $# -ge 2 ]] || die "--git-signing-key needs a file"
+		git_signing_key_source="$2"
+		shift 2
+		;;
 	--check)
 		check_only=1
 		shift
@@ -80,6 +91,28 @@ done
 if ! command -v setfacl >/dev/null || ! command -v getfacl >/dev/null; then
 	die "setfacl/getfacl not found (Debian/Ubuntu: apt install acl)"
 fi
+
+# A secret GPG key that signs with an empty passphrase, checked in a throwaway keyring.
+check_signing_key() {
+	local file="$1" gnupg status=0
+	command -v gpg >/dev/null || die "gpg not found, needed to check ${file}"
+	gnupg="$(mktemp -d)"
+	if ! GNUPGHOME="${gnupg}" gpg --batch --quiet --import "${file}" 2>/dev/null; then
+		status=1
+	elif ! GNUPGHOME="${gnupg}" gpg --batch --with-colons --list-secret-keys 2>/dev/null | grep -q '^sec:'; then
+		status=2
+	elif ! printf 'probe\n' | GNUPGHOME="${gnupg}" gpg --batch --pinentry-mode loopback --passphrase '' \
+		--sign >/dev/null 2>&1; then
+		status=3
+	fi
+	GNUPGHOME="${gnupg}" gpgconf --kill all 2>/dev/null || true
+	rm -rf "${gnupg}"
+	case "${status}" in
+	1) die "${file} is not a GPG key" ;;
+	2) die "${file} holds no secret key (export it with gpg --armor --export-secret-keys)" ;;
+	3) die "${file} cannot sign without a passphrase (HerdQuay cannot unlock one)" ;;
+	esac
+}
 
 # The effective ACL must be exactly: owner rw, UID 568 r, nothing for the group or anyone else.
 check_file() {
@@ -120,6 +153,10 @@ if ((!check_only)); then
 		openssl pkey -noout -passin pass: -in "${github_app_key_source}" >/dev/null 2>&1 ||
 			die "${github_app_key_source} is not an unencrypted private key (HerdQuay cannot unlock a passphrase)"
 		provision_file "${github_app_key_source}" "${SECRETS_DIR}/github_app_key"
+	fi
+	if [[ -n ${git_signing_key_source} ]]; then
+		check_signing_key "${git_signing_key_source}"
+		provision_file "${git_signing_key_source}" "${SECRETS_DIR}/git_signing_key"
 	fi
 fi
 

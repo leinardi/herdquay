@@ -115,13 +115,14 @@ seed_config() {
 	fi
 }
 
-# The GitHub App's configuration for SSH sessions, which do not inherit this environment: the App
-# ID, key file path and API URL that are set, never the key itself. Rewritten at every start, so a
-# variable removed from the deployment is gone from SSH sessions too.
+# The GitHub configuration for SSH sessions, which do not inherit this environment: the App ID, the
+# App key's and the signing key's file paths and the API URL that are set, never a key itself.
+# Rewritten at every start, so a variable removed from the deployment is gone from SSH sessions too.
 write_github_env() {
 	local file="${HERDQUAY_CONFIG_DIR}/github.env" tmp name
 	tmp="$(mktemp "${file}.XXXXXX")"
-	for name in HERDQUAY_GITHUB_APP_ID HERDQUAY_GITHUB_APP_KEY_FILE HERDQUAY_GITHUB_API_URL; do
+	for name in HERDQUAY_GITHUB_APP_ID HERDQUAY_GITHUB_APP_KEY_FILE HERDQUAY_GITHUB_API_URL \
+		HERDQUAY_GIT_SIGNING_KEY_FILE; do
 		[[ -n ${!name:-} ]] || continue
 		if [[ ${!name} == *$'\n'* ]]; then
 			log "warning: ${name} contains a newline: ignored"
@@ -135,9 +136,14 @@ write_github_env() {
 # The commit identity, rewritten at every start into identity.gitconfig, which /etc/gitconfig
 # includes at the system level (so a user.* in ~/.gitconfig still wins): HERDQUAY_GIT_NAME and
 # HERDQUAY_GIT_EMAIL when both are set, otherwise the GitHub App's bot. When the bot's identity
-# cannot be read (GitHub unreachable), the previous file is kept.
+# cannot be read (GitHub unreachable), the previous bot identity is kept.
+#
+# Commits and tags are signed only with the custom identity and a signing key: GitHub shows a
+# signature as Verified only when the key is registered on the account the commit's email belongs
+# to, and the bot cannot register one. A key mounted with the bot identity is ignored.
 write_git_identity() {
 	local file="${HERDQUAY_CONFIG_DIR}/identity.gitconfig" tmp name="" email="" source identity status=0
+	local signing_key="${HERDQUAY_GIT_SIGNING_KEY_FILE:-/run/secrets/git_signing_key}" fingerprint=""
 	if [[ -n ${HERDQUAY_GIT_NAME:-} && -n ${HERDQUAY_GIT_EMAIL:-} ]]; then
 		name="${HERDQUAY_GIT_NAME}"
 		email="${HERDQUAY_GIT_EMAIL}"
@@ -153,23 +159,49 @@ write_git_identity() {
 			return 0
 		fi
 		if ((status != 0)); then
-			log "warning: could not read the GitHub App bot's identity (status ${status}): keeping the previous Git identity"
+			keep_bot_identity "${file}" "could not read the GitHub App bot's identity (status ${status})"
 			return 0
 		fi
 		name="$(sed -n 's/^name=//p' <<<"${identity}")"
 		email="$(sed -n 's/^email=//p' <<<"${identity}")"
 		if [[ -z ${name} || -z ${email} ]]; then
-			log "warning: the GitHub App bot's identity is incomplete: keeping the previous Git identity"
+			keep_bot_identity "${file}" "the GitHub App bot's identity is incomplete"
 			return 0
 		fi
 		source="the GitHub App's bot"
+		if [[ -s ${signing_key} ]]; then
+			log "warning: ${signing_key} is ignored: commits by the GitHub App's bot are never signed (set HERDQUAY_GIT_NAME and HERDQUAY_GIT_EMAIL to sign)"
+		fi
 	fi
 	tmp="$(mktemp "${file}.XXXXXX")"
 	printf '# Written by herdquay-entrypoint at every start; edits are lost.\n# source: %s\n' "${source}" >"${tmp}"
 	git config --file "${tmp}" user.name "${name}"
 	git config --file "${tmp}" user.email "${email}"
+	if [[ ${source} != "the GitHub App's bot" && -s ${signing_key} ]]; then
+		fingerprint="$(herdquay-gpg --batch --with-colons --list-secret-keys 2>/dev/null |
+			awk -F: '$1 == "fpr" { print $10; exit }')" || true
+		if [[ -n ${fingerprint} ]]; then
+			git config --file "${tmp}" gpg.program /usr/local/bin/herdquay-gpg
+			git config --file "${tmp}" user.signingkey "${fingerprint}"
+			git config --file "${tmp}" commit.gpgsign true
+			git config --file "${tmp}" tag.gpgsign true
+		else
+			log "warning: could not import the signing key ${signing_key}: commits are not signed"
+		fi
+	fi
 	mv -f "${tmp}" "${file}"
-	log "Git identity: ${name} <${email}> (${source})"
+	log "Git identity: ${name} <${email}> (${source})${fingerprint:+, signing with ${fingerprint}}"
+}
+
+# keep_bot_identity <file> <reason>: keeps a previous bot identity, but drops a custom one, which
+# the environment no longer asks for (and which may carry the signing configuration).
+keep_bot_identity() {
+	if [[ -r $1 ]] && grep -qx "# source: the GitHub App's bot" "$1"; then
+		log "warning: $2: keeping the previous Git identity"
+	else
+		rm -f "$1"
+		log "warning: $2: no Git identity"
+	fi
 }
 
 wait_for_herdr() {

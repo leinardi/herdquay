@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+#
+# MIT License
+#
+# Copyright (c) 2026 Roberto Leinardi
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# gpg for Git's commit and tag signatures (gpg.program), with the signing key from the secret file
+# HERDQUAY_GIT_SIGNING_KEY_FILE (default /run/secrets/git_signing_key): an armored secret key
+# without a passphrase. The keyring lives in /tmp/herdquay-gnupg (tmpfs, 0700), so the key never
+# reaches the home volume, and ~/.gnupg is never used. It is imported on first use and rebuilt from
+# scratch whenever the SHA-256 of the file's content differs from the one recorded at the last
+# import: a renewed expiry or an added subkey keeps the primary fingerprint, so the fingerprint
+# alone would miss them. With no key file the keyring is empty. Every argument goes to gpg.
+#
+# SSH sessions do not inherit the container's environment: HERDQUAY_GIT_SIGNING_KEY_FILE falls back
+# to ~/.config/herdquay/github.env, which the entrypoint writes, so Herdr panes and SSH sessions
+# sign alike.
+
+set -euo pipefail
+shopt -s inherit_errexit
+
+GNUPG_DIR=/tmp/herdquay-gnupg
+LOCK_FILE=/tmp/herdquay-gnupg.lock
+ENV_FILE="${HOME}/.config/herdquay/github.env"
+
+die() {
+	echo "herdquay-gpg: $*" >&2
+	exit 1
+}
+
+if [[ -z ${HERDQUAY_GIT_SIGNING_KEY_FILE:-} && -r ${ENV_FILE} ]]; then
+	HERDQUAY_GIT_SIGNING_KEY_FILE="$(sed -n 's/^HERDQUAY_GIT_SIGNING_KEY_FILE=//p' "${ENV_FILE}" | tail -n 1)"
+fi
+KEY_FILE="${HERDQUAY_GIT_SIGNING_KEY_FILE:-/run/secrets/git_signing_key}"
+
+umask 077
+# Shared /tmp: refuse a lock or keyring someone else planted, or a symlink to one.
+[[ ! -L ${LOCK_FILE} ]] || die "${LOCK_FILE} is a symlink"
+exec 9>>"${LOCK_FILE}"
+[[ -O ${LOCK_FILE} ]] || die "${LOCK_FILE} is not a file of this user"
+# The keyring is checked and rebuilt under an exclusive lock, and gpg runs under a shared one, so a
+# rebuild waits for every signature in flight and a signature never starts on a half-built keyring.
+flock -x 9
+
+key=""
+if [[ -s ${KEY_FILE} ]]; then
+	key="$(<"${KEY_FILE}")" || die "cannot read the signing key ${KEY_FILE}"
+fi
+digest="$(printf '%s' "${key}" | sha256sum | cut -d' ' -f1)"
+
+if [[ -e ${GNUPG_DIR} || -L ${GNUPG_DIR} ]]; then
+	[[ -d ${GNUPG_DIR} && ! -L ${GNUPG_DIR} && -O ${GNUPG_DIR} ]] ||
+		die "${GNUPG_DIR} is not a directory of this user"
+fi
+if [[ $(cat "${GNUPG_DIR}/herdquay-key.sha256" 2>/dev/null || true) != "${digest}" ]]; then
+	if [[ -d ${GNUPG_DIR} ]]; then
+		gpgconf --homedir "${GNUPG_DIR}" --kill all 2>/dev/null || true
+		rm -rf "${GNUPG_DIR}"
+	fi
+	mkdir -m 0700 "${GNUPG_DIR}"
+	if [[ -n ${key} ]]; then
+		if ! gpg --homedir "${GNUPG_DIR}" --batch --quiet --import <<<"${key}" 2>/dev/null; then
+			rm -rf "${GNUPG_DIR}"
+			die "could not import the signing key ${KEY_FILE}"
+		fi
+	fi
+	printf '%s\n' "${digest}" >"${GNUPG_DIR}/herdquay-key.sha256"
+fi
+flock -s 9
+
+# A child, not exec: this process holds the lock while gpg runs. gpg itself does not get the lock's
+# descriptor, so the gpg-agent it starts cannot hold the lock after gpg exits.
+status=0
+GNUPGHOME="${GNUPG_DIR}" gpg "$@" 9>&- || status=$?
+exit "${status}"

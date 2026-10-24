@@ -31,7 +31,9 @@ IMAGE_REVISION ?= $(shell git -C "$(REPO_ROOT)" rev-parse HEAD 2>/dev/null || ec
 IMAGE_CREATED  ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 # The GitHub App is optional: its override file is added only when its key exists.
 COMPOSE_FILES  := -f "$(REPO_ROOT)/compose.yaml" $(if $(wildcard $(REPO_ROOT)/local/secrets/github_app_key),-f "$(REPO_ROOT)/compose.github.yaml")
-COMPOSE        ?= docker compose $(COMPOSE_FILES)
+# The optional signing key, mounted by compose.github.yaml; without it the secret is /dev/null.
+COMPOSE_ENV    := $(if $(wildcard $(REPO_ROOT)/local/secrets/git_signing_key),HERDQUAY_GIT_SIGNING_KEY_SECRET="$(REPO_ROOT)/local/secrets/git_signing_key")
+COMPOSE        ?= $(COMPOSE_ENV) docker compose $(COMPOSE_FILES)
 
 .PHONY: image-build
 image-build: ## Build the HerdQuay image

@@ -21,6 +21,7 @@ How to run, connect to, check and recover a HerdQuay container. The local Compos
 | `HERDQUAY_AUTHORIZED_KEYS_FILE` | `/run/secrets/authorized_keys` | public keys allowed to SSH in; required, rebuilt into `~/.ssh/authorized_keys` on every start |
 | `HERDQUAY_GITHUB_TOKEN_FILE` | `/run/secrets/github_token` | fine-grained GitHub token for `gh` and Git over HTTPS; optional |
 | `HERDQUAY_GIT_NAME`, `HERDQUAY_GIT_EMAIL` | unset | Git identity, written to `~/.gitconfig` only when it has none |
+| `HERDQUAY_GIT_SIGNING_KEY_FILE` | `/run/secrets/git_signing_key` | armored GPG secret key without a passphrase; with `HERDQUAY_GIT_NAME` and `HERDQUAY_GIT_EMAIL`, commits and tags are signed ([Commit signing](#commit-signing)); optional |
 | `HERDQUAY_STOP_TIMEOUT` | `15` | seconds a child gets after SIGTERM before SIGKILL; keep it below the orchestrator's stop grace period (30 s in the harness) |
 | `HERDQUAY_AGENT_RESTORE` | `0` | `1` makes `herdquay-agents` resume the Claude agents itself (turn Herdr's native restore off with it) |
 | `HERDQUAY_CLAUDE_INSTALL` | `1` | `0` skips installing Claude Code at start (the tests use it on throwaway volumes) |
@@ -44,6 +45,37 @@ If the download or a check fails, the container still starts, without Claude Cod
 `herdquay doctor` fails on it, and the next start tries again. The first start of a new pin needs
 outbound HTTPS to `downloads.claude.ai`; the healthcheck's start period (6 minutes) covers the
 download.
+
+### Commit signing
+
+GitHub shows a commit as Verified only when its signing key is registered on the account the
+commit's email belongs to. So signing applies to the identity set with `HERDQUAY_GIT_NAME` and
+`HERDQUAY_GIT_EMAIL`; the GitHub App's bot cannot register a key, its commits stay unsigned, and a
+key mounted with the bot identity is ignored (logged at start, reported by `herdquay doctor`).
+Signing is off without a key.
+
+Create a dedicated signing-only key with an expiry and no passphrase (nothing could unlock one
+unattended), on the desktop, register its public half, and provision the secret half:
+
+```bash
+gpg --quick-gen-key "Roberto Leinardi <leinardi@gmail.com>" ed25519 sign 1y   # empty passphrase
+gpg --armor --export <fingerprint> >herdquay-signing.pub.asc
+gh gpg-key add herdquay-signing.pub.asc
+gpg --armor --export-secret-keys <fingerprint> >herdquay-signing.asc
+scripts/local-secrets.sh --git-signing-key herdquay-signing.asc   # local harness
+rm herdquay-signing.asc
+```
+
+At start the entrypoint adds `gpg.program`, `user.signingkey`, `commit.gpgsign` and `tag.gpgsign`
+to `~/.config/herdquay/identity.gitconfig`; a value in `~/.gitconfig` still overrides them.
+`herdquay-gpg` imports the key into `/tmp/herdquay-gnupg`, never `~/.gnupg`, and imports it again
+whenever the secret's content changes, so a renewal (`gpg --quick-set-expire`, then the secret
+updated) needs no restart. `herdquay doctor` shows whether signing is on, the key's fingerprint and
+expiry, warns when no UID of the key matches the commit email (GitHub would show Unverified) or
+when the key is ignored for the bot, and makes a test signature. To revoke the key:
+`gh gpg-key delete <id>`, then remove the secret; commits already pushed may keep their Verified
+status, so review what the key signed. In the local harness, the signing key is mounted by
+`compose.github.yaml`, so only together with the App key.
 
 ## Local harness
 

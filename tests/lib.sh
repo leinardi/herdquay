@@ -22,9 +22,10 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 #
-# Shared helpers for the image tests: a scratch secrets directory, a throwaway SSH client key and
-# GitHub App key, and a container started the way the harness and the deployment run it (all capabilities dropped,
-# no-new-privileges, /tmp as an exec tmpfs, secrets bind-mounted as files). Sourced, not run.
+# Shared helpers for the image tests: a scratch secrets directory, a throwaway SSH client key,
+# GitHub App key and GPG signing key, and a container started the way the harness and the
+# deployment run it (all capabilities dropped, no-new-privileges, /tmp as an exec tmpfs, secrets
+# bind-mounted as files). Sourced, not run.
 
 # shellcheck disable=SC2034 # the variables are for the scripts that source this file
 REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -39,6 +40,9 @@ APP_ID=12345
 # Where the smoke test's stub API listens inside the container; elsewhere nothing does, so the
 # entrypoint's App bot lookup fails fast instead of reaching the real GitHub.
 STUB_API_URL="http://127.0.0.1:18080"
+# The throwaway signing key's keyring on this side, kept for the renewal check, and its identity.
+SIGNING_GNUPG="${SCRATCH}/gnupg"
+SIGNING_UID="HerdQuay Test <test@example.invalid>"
 export HERDQUAY_SECRETS_DIR="${SCRATCH}/secrets"
 
 containers=()
@@ -49,6 +53,7 @@ cleanup() {
 	for name in "${containers[@]}"; do docker rm -f "${name}" >/dev/null 2>&1 || true; done
 	for name in "${volumes[@]}"; do docker volume rm -f "${name}" >/dev/null 2>&1 || true; done
 	[[ -n ${SSH_AGENT_PID:-} ]] && kill "${SSH_AGENT_PID}" 2>/dev/null
+	[[ -d ${SIGNING_GNUPG} ]] && GNUPGHOME="${SIGNING_GNUPG}" gpgconf --kill all 2>/dev/null
 	rm -rf "${SCRATCH}"
 }
 trap cleanup EXIT
@@ -60,15 +65,22 @@ die() {
 }
 
 # Real key files, provisioned with the same ACL script the harness uses. The App key is a throwaway
-# RSA key: only the stub API trusts it.
+# RSA key: only the stub API trusts it. The signing key is a throwaway passphrase-less GPG key,
+# SIGNING_FINGERPRINT.
 make_secrets() {
 	ssh-keygen -q -t ed25519 -N '' -C herdquay-test-client -f "${CLIENT_KEY}"
 	openssl genpkey -quiet -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "${SCRATCH}/github_app_key"
 	openssl pkey -in "${SCRATCH}/github_app_key" -pubout -out "${APP_PUBLIC_KEY}"
 	chmod 0644 "${APP_PUBLIC_KEY}"
+	install -d -m 0700 "${SIGNING_GNUPG}"
+	GNUPGHOME="${SIGNING_GNUPG}" gpg --batch --quiet --passphrase '' \
+		--quick-gen-key "${SIGNING_UID}" ed25519 sign 1y 2>/dev/null
+	SIGNING_FINGERPRINT="$(GNUPGHOME="${SIGNING_GNUPG}" gpg --batch --with-colons --list-secret-keys 2>/dev/null |
+		awk -F: '$1 == "fpr" { print $10; exit }')"
+	GNUPGHOME="${SIGNING_GNUPG}" gpg --batch --armor --export-secret-keys >"${SCRATCH}/git_signing_key"
 	"${REPO_ROOT}/scripts/local-secrets.sh" --authorized-keys "${CLIENT_KEY}.pub" \
-		--github-app-key "${SCRATCH}/github_app_key" >/dev/null
-	rm -f "${SCRATCH}/github_app_key"
+		--github-app-key "${SCRATCH}/github_app_key" --git-signing-key "${SCRATCH}/git_signing_key" >/dev/null
+	rm -f "${SCRATCH}/github_app_key" "${SCRATCH}/git_signing_key"
 }
 
 # start_container <name> <home-volume> [docker run options...] [-- command...]: prints nothing,

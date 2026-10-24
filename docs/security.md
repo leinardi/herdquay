@@ -22,6 +22,7 @@ reach, what protects the rest, and which risks are accepted on purpose.
 | Authorized SSH keys | `/run/secrets/authorized_keys` | public keys; UID 568 |
 | GitHub SSH private key | `/run/secrets/github_ssh_key` | UID 568 |
 | GitHub fine-grained token | `/run/secrets/github_token` | UID 568 |
+| Git signing key (optional) | `/run/secrets/git_signing_key`; imported into `/tmp/herdquay-gnupg` (tmpfs, 0700) | UID 568 |
 | Claude login | `~/.claude/.credentials.json` (0600) on the home volume | UID 568 |
 | opencode provider logins | `~/.local/share/opencode/auth.json` on the home volume | UID 568 |
 | SSH host key | `~/.ssh/host/` (0600) on the home volume | UID 568 |
@@ -53,6 +54,15 @@ reach, what protects the rest, and which risks are accepted on purpose.
   including code Claude runs and project scripts it executes. This is inherent to an agent that
   can push. Keep the token fine-grained (selected repositories, only the permissions needed:
   contents, pull requests, issues, actions, workflows).
+- **The agent can sign as the owner.** With the optional signing key, any process running as 568,
+  Claude included, can sign commits and tags as the owner, and that carries more weight than the
+  push itself: GitHub shows those commits as Verified, as if the owner had made them. The key has
+  no passphrase, for the same reason as the other secrets, and it never reaches the home volume
+  (`herdquay-gpg` keeps the keyring on `/tmp`). Mitigations: a dedicated signing-only key with an
+  expiry, used for nothing else, revocable on its own with `gh gpg-key delete`. Deleting it stops
+  new signatures from verifying, but GitHub keeps the verification it recorded for commits already
+  pushed, so commits signed before the deletion may stay Verified and need checking. The App's bot
+  identity never signs.
 - **Agent credentials at rest.** `~/.claude/.credentials.json` and opencode's
   `~/.local/share/opencode/auth.json` are plaintext on the home volume, protected by their mode
   and the dataset's permissions. `/logout` and revoking the session in the claude.ai settings

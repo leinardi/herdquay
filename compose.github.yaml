@@ -1,11 +1,14 @@
 # Adds the GitHub App to the local harness: its private key as a secret, and its App ID from the
 # shell or .env (HERDQUAY_GITHUB_APP_ID, required). make compose-up includes this file when
 # local/secrets/github_app_key exists. HERDQUAY_GIT_NAME and HERDQUAY_GIT_EMAIL, both or neither,
-# replace the App's bot as the commit identity.
+# replace the App's bot as the commit identity; with them, a GPG key in local/secrets/git_signing_key
+# signs commits and tags (make compose-up points HERDQUAY_GIT_SIGNING_KEY_SECRET at it when it
+# exists; the default, /dev/null, is an empty secret, which means no signing).
 services:
   herdquay:
     secrets:
       - github_app_key
+      - git_signing_key
     environment:
       HERDQUAY_GITHUB_APP_ID: "${HERDQUAY_GITHUB_APP_ID:?set HERDQUAY_GITHUB_APP_ID to the GitHub App's ID}"
       HERDQUAY_GIT_NAME: "${HERDQUAY_GIT_NAME:-}"
@@ -14,3 +17,5 @@ services:
 secrets:
   github_app_key:
     file: ./local/secrets/github_app_key
+  git_signing_key:
+    file: "${HERDQUAY_GIT_SIGNING_KEY_SECRET:-/dev/null}"

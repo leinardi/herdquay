@@ -72,14 +72,14 @@ check_secret() {
 	fi
 }
 
-# The GitHub App's configuration as herdquay-github reads it: the environment, else the github.env
+# The GitHub configuration as herdquay-github and herdquay-gpg read it: the environment, else the github.env
 # the entrypoint writes for SSH sessions.
 github_config() {
 	local key value
 	if [[ -r ${HOME}/.config/herdquay/github.env ]]; then
 		while IFS='=' read -r key value; do
 			case "${key}" in
-			HERDQUAY_GITHUB_APP_ID | HERDQUAY_GITHUB_APP_KEY_FILE)
+			HERDQUAY_GITHUB_APP_ID | HERDQUAY_GITHUB_APP_KEY_FILE | HERDQUAY_GIT_SIGNING_KEY_FILE)
 				[[ -n ${!key:-} ]] || printf -v "${key}" '%s' "${value}"
 				;;
 			esac
@@ -87,6 +87,7 @@ github_config() {
 	fi
 	app_id="${HERDQUAY_GITHUB_APP_ID:-}"
 	app_key="${HERDQUAY_GITHUB_APP_KEY_FILE:-/run/secrets/github_app_key}"
+	signing_key="${HERDQUAY_GIT_SIGNING_KEY_FILE:-/run/secrets/git_signing_key}"
 }
 
 # The effective commit identity and where it comes from. A user.* in ~/.gitconfig overrides the
@@ -119,6 +120,55 @@ check_git_identity() {
 	fi
 }
 
+# Commit signing: on only with the custom identity and a signing key (herdquay-entrypoint).
+check_signing() {
+	local enabled source="" fingerprint program colons expiry email
+	enabled="$(git config --bool commit.gpgsign || true)"
+	if [[ -r ${HOME}/.config/herdquay/identity.gitconfig ]]; then
+		source="$(sed -n 's/^# source: //p' "${HOME}/.config/herdquay/identity.gitconfig")"
+	fi
+	if [[ ${enabled} != true ]]; then
+		if [[ -s ${signing_key} && ${source} == "the GitHub App's bot" ]]; then
+			warn "commit signing off: ${signing_key} is ignored, the identity is the GitHub App's bot (set HERDQUAY_GIT_NAME and HERDQUAY_GIT_EMAIL to sign)"
+		elif [[ -s ${signing_key} ]]; then
+			warn "commit signing off although ${signing_key} is present (commit.gpgsign is not true)"
+		else
+			ok "commit signing off (no signing key at ${signing_key})"
+		fi
+		return
+	fi
+	fingerprint="$(git config user.signingkey || true)"
+	program="$(git config gpg.program || echo gpg)"
+	if [[ -z ${fingerprint} ]]; then
+		fail "commit signing on, but user.signingkey is not set"
+		return
+	fi
+	if ! colons="$("${program}" --batch --with-colons --list-keys "${fingerprint}" 2>/dev/null)"; then
+		fail "commit signing on, but ${program} has no key ${fingerprint}"
+		return
+	fi
+	expiry="$(awk -F: '$1 == "pub" { print $7; exit }' <<<"${colons}")"
+	if [[ -n ${expiry} ]]; then
+		expiry="expires $(date -u -d "@${expiry}" +%Y-%m-%d)"
+	else
+		expiry="no expiry"
+	fi
+	if [[ $(awk -F: '$1 == "pub" { print $2; exit }' <<<"${colons}") == e ]]; then
+		fail "commit signing on, but the key ${fingerprint} has expired (${expiry#expires })"
+		return
+	fi
+	ok "commit signing on: ${fingerprint}, ${expiry}"
+	email="$(git config user.email || true)"
+	if ! awk -F: '$1 == "uid" { print $10 }' <<<"${colons}" | grep -qiF "<${email}>"; then
+		warn "no UID of the signing key matches the commit email ${email}: GitHub would show the commits as Unverified"
+	fi
+	if printf 'herdquay doctor probe\n' | "${program}" --batch --local-user "${fingerprint}" --sign >/dev/null 2>&1; then
+		ok "test signature with ${fingerprint}"
+	else
+		fail "cannot sign with ${fingerprint} (is the key protected by a passphrase?)"
+	fi
+}
+
 check_github() {
 	local token status=0 repo out
 	token="$(herdquay-github token 2>&1)" || status=$?
@@ -144,7 +194,7 @@ check_github() {
 }
 
 doctor() {
-	local network=0 status integrations pinned app_id app_key
+	local network=0 status integrations pinned app_id app_key signing_key
 	[[ ${1:-} == --network ]] && network=1
 
 	section "Identity"
@@ -213,6 +263,7 @@ doctor() {
 
 	section "Git"
 	check_git_identity
+	check_signing
 
 	section "Tools"
 	check_tool git git --version
