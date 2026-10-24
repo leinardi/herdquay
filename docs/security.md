@@ -53,14 +53,17 @@ reach, what protects the rest, and which risks are accepted on purpose.
   repository of the App's installation, with the App's permissions (contents, pull requests,
   issues and workflows read and write, actions read), for as long as the key is valid. A Git token
   is restricted to one repository and expires within the hour, but any process running as 568,
-  Claude included, can read the key and mint a token for any installed repository. Mitigations:
-  the installation covers only selected repositories, the permissions are the minimum, and the
-  key is revocable on its own in the App's settings (or the installation suspended); rotation is
-  a new key, a secret update and a restart. Later hardening: a token broker outside the container
-  that holds the key and hands out per-repository tokens, so the container never sees the key.
+  Claude included, can read the key and mint a token for any installed repository; installed on
+  "All repositories", that is every repository of the account, future ones included. Mitigations:
+  the permissions are the minimum, an installation on "Only select repositories" narrows the reach
+  when that matters more than convenience, and the key is revocable on its own in the App's
+  settings (or the installation suspended); rotation is a new key, a secret update and a restart.
+  Later hardening: a token broker outside the container that holds the key and hands out
+  per-repository tokens, so the container never sees the key.
 - **The agent can use every credential.** Anything that runs as 568 can read the secrets above,
   including code Claude runs and project scripts it executes. This is inherent to an agent that
-  can push. Keep the App's repository selection and permissions to what HerdQuay needs.
+  can push. Keep the App's permissions, and its repository selection when it has one, to what
+  HerdQuay needs.
 - **The agent can sign as the owner.** With the optional signing key, any process running as 568,
   Claude included, can sign commits and tags as the owner, and that carries more weight than the
   push itself: GitHub shows those commits as Verified, as if the owner had made them. The key has

@@ -60,9 +60,10 @@ Set up the App once, on the GitHub account that owns the repositories:
 2. Repository permissions: Contents read and write, Pull requests read and write, Issues read and
    write, Workflows read and write, Actions read-only, Metadata read-only. Nothing else.
 3. Note the App ID on the App's page, and generate a private key (a `.pem` download).
-4. Install the App on "Only select repositories" and pick them (a deployment may manage the
-   selection as code). A repository outside it fails with "the GitHub App is not installed on
-   `<owner>/<repo>`".
+4. Install the App on the account: "All repositories" includes every current and future
+   repository; "Only select repositories" narrows what the key can reach
+   ([security.md](security.md)), and a repository outside the selection fails with "the GitHub
+   App is not installed on `<owner>/<repo>`".
 5. Provide the key as the `github_app_key` secret and the ID as `HERDQUAY_GITHUB_APP_ID`
    ([Local harness](#local-harness), [deployment.md](deployment.md)), then delete the download.
 
