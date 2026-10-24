@@ -6,9 +6,9 @@ HerdQuay is not released yet: only `main` gets security fixes. Once images are p
 latest release does, and released `vX.Y.Z` tags are immutable and never re-pointed.
 
 The image never contains credentials. A report about a secret leaking out of a running container
-(SSH keys, the GitHub token, Claude or opencode credentials) is in scope; see
-[docs/security.md](docs/security.md) for the threat model and the risks that are accepted on
-purpose.
+(SSH keys, the GitHub App's private key or its installation tokens, the Git signing key, Claude
+or opencode credentials) is in scope; see [docs/security.md](docs/security.md) for the threat
+model and the risks that are accepted on purpose.
 
 ## Reporting a vulnerability
 

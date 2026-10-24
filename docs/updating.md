@@ -38,7 +38,6 @@ the same automated tests.
 | `PLAYWRIGHT_VERSION` | npm | bump together with `@playwright/test` in bitgauge and runhold |
 | `PRE_COMMIT_VERSION` | PyPI | keep in step with the projects' CI pin |
 | Ubuntu packages | apt signatures (Ubuntu's archive key) | not pinned (droast's DF005 stays below `min-severity`): they follow the base's security updates |
-| `container/etc/ssh/ssh_known_hosts` | fingerprints in GitHub's docs | only when GitHub rotates a host key: regenerate from `https://api.github.com/meta` and compare with GitHub's published fingerprints |
 
 ## Base image
 

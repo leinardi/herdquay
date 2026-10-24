@@ -29,7 +29,7 @@ venv/
 .tmp/
 tmp/
 
-# The local Compose harness's secrets and state: SSH keys, the GitHub token, authorized_keys.
+# The local Compose harness's secrets and state: the GitHub App key, the signing key, authorized_keys.
 # Never committed.
 local/
 

@@ -47,11 +47,11 @@ Makefile.
 | `Makefile`, `.mk/`, `scripts/bootstrap-mk-common.sh` | make-common: shared snippets in `MK_COMMON_FILES`, local ones in `MK_LOCAL_FILES` |
 | `.github/workflows/ci.yaml` | `pre-commit-all`, `conventional-commits` and the `ci-result` aggregator; the reviewdog jobs on pull requests |
 | `Dockerfile` | the image: a `fetch` stage that downloads and verifies every non-apt artifact, then the final stage on the same Ubuntu 26.04 base |
-| `container/bin/` | `herdquay-entrypoint` (supervisor), `herdquay-agents` (restore check and fallback), `herdquay-healthcheck`, `herdquay` (doctor), the `gh` wrapper |
-| `container/etc/`, `container/share/`, `container/keys/` | sshd and SSH client config, GitHub's host keys, system gitconfig, profile; seeded Herdr config; Anthropic's release key |
-| `compose.yaml`, `compose.github.yaml` | the local test harness (SSH on loopback), and its optional GitHub secrets |
+| `container/bin/` | `herdquay-entrypoint` (supervisor), `herdquay-agents` (restore check and fallback), `herdquay-healthcheck`, `herdquay` (doctor), `herdquay-github` (GitHub App tokens, Git credential helper), `herdquay-gpg` (commit signing), the `gh` wrapper |
+| `container/etc/`, `container/share/`, `container/keys/` | sshd config, system gitconfig (credential helper, HTTPS rewrites), profile; seeded Herdr config; Anthropic's release key |
+| `compose.yaml`, `compose.github.yaml` | the local test harness (SSH on loopback), and its optional GitHub App key, App ID and signing key |
 | `scripts/local-secrets.sh`, `scripts/check-updates.sh` | the harness's ACL-provisioned secrets; the report of pins with newer releases |
-| `tests/` | `smoke.sh` and `supervision.sh` (CI), `projects.sh` (manual, the five projects' workflows), `lib.sh` |
+| `tests/` | `smoke.sh` and `supervision.sh` (CI), `projects.sh` (manual, the five projects' workflows), `lib.sh`, `github-stub.py` (the smoke test's stub GitHub API) |
 | `docs/` | operations, security, dev environment, updating, Docker access, deployment, devbox comparison; `herdr-api.schema.json` (Herdr's API at the pinned version) |
 | `.github/actions/setup-shellcheck/` | installs the pinned, digest-verified ShellCheck binary droast's bridge runs |
 | `.github/workflows/pre-commit-warmup.yaml` | refreshes the pre-commit cache on `main` (hook config change, weekly) and prunes the older entries |
@@ -77,9 +77,10 @@ Makefile.
   tool installed in `pre-commit-all`; a hook that a dedicated job runs instead is listed in
   `pre-commit-all`'s `SKIP`, with the job named in a comment.
 - `README.md` is the user-facing contract: keep it in step with what the repository does.
-- **No secret ever enters the image or Git**: no SSH key, token, Claude credential or
-  `authorized_keys`, not even in a test or an example. They reach the container as secret files
-  at run time; the local harness keeps its copies in the ignored `local/` directory.
+- **No secret ever enters the image or Git**: no SSH key, GitHub App key, token, signing key,
+  Claude credential or `authorized_keys`, not even in a test or an example. They reach the
+  container as secret files at run time; the local harness keeps its copies in the ignored
+  `local/` directory.
 - **No Docker socket, and never a read-write Docker API proxy.** Optional read-only
   diagnostics are a separate, opt-in deployment decision.
 - Every tool the image downloads is pinned and verified (checksum or signature) in the

@@ -34,16 +34,17 @@ private and back it up only to trusted targets.
 | Secret file | Required | Content |
 | --- | --- | --- |
 | `/run/secrets/authorized_keys` | yes | the public keys allowed to log in; the container refuses to start without it |
-| `/run/secrets/github_ssh_key` | no | an ed25519 private key without a passphrase, its public key added to GitHub ([security.md](security.md) explains the trade-offs) |
-| `/run/secrets/github_token` | no | a fine-grained GitHub token for `gh` and Git over HTTPS |
+| `/run/secrets/github_app_key` | no | the GitHub App's private key, for Git and `gh` over HTTPS ([operations.md](operations.md#github-app) sets the App up, [security.md](security.md) explains the trade-offs) |
+| `/run/secrets/git_signing_key` | no | an armored GPG secret key without a passphrase, to sign commits as `HERDQUAY_GIT_NAME` / `HERDQUAY_GIT_EMAIL` ([operations.md](operations.md#commit-signing)) |
 
 Each readable by UID 568 only (in Swarm: `uid: "568"`, `gid: "568"`, `mode: 0400`). Prefer
 creating the GitHub ones by hand on the host (`docker secret create … -` from stdin) over keeping
 them in a deployment repository. Rotation: a new secret name, update the reference, redeploy,
 delete the old one.
 
-Environment: `HERDQUAY_GIT_NAME`, `HERDQUAY_GIT_EMAIL` for the Git identity. Never pass a
-credential as an environment variable: `docker inspect` shows them.
+Environment: `HERDQUAY_GITHUB_APP_ID`, required with the App key; `HERDQUAY_GIT_NAME` and
+`HERDQUAY_GIT_EMAIL`, both or neither, for the commit identity (default: the App's bot). Never pass
+a credential as an environment variable: `docker inspect` shows them.
 
 ## Network
 
@@ -51,15 +52,16 @@ credential as an environment variable: `docker inspect` shows them.
   clients connect from. HerdQuay needs no inbound HTTP and should have no reverse-proxy route or
   internet exposure.
 - Outbound HTTPS is required: Anthropic (Claude Code's download at first start, Claude, Remote
-  Control), GitHub (SSH 22 and HTTPS), the Go module proxy, npm, PyPI, nodejs.org, Playwright's CDN,
-  and the providers opencode is logged in to.
+  Control), GitHub (HTTPS only: `github.com`, `api.github.com`; no SSH), the Go module proxy, npm,
+  PyPI, nodejs.org, Playwright's CDN, and the providers opencode is logged in to.
 - No Docker API network by default ([docker-diagnostics.md](docker-diagnostics.md)).
 
 ## Acceptance after deployment
 
 1. `ssh` works from the allowed networks, with the host key fingerprint logged at first start,
    and is refused from anywhere else.
-2. `herdquay doctor --network` passes (GitHub over SSH and with the token).
+2. `herdquay doctor --network` passes (an App installation token, a repository listed with `gh`,
+   `git ls-remote` over HTTPS).
 3. Herdr on the desktop attaches; a Claude conversation shows on the phone; detach, still there.
 4. Restart the container: the conversation resumes on the phone with no desktop attached, and
    `herdquay doctor` reports every session resumed.

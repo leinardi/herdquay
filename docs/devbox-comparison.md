@@ -17,7 +17,7 @@ from devbox and credits it in its header; nothing else is copied.
 | Claude Code installed at run time by `install.sh`, self-updating | installed at run time too, into the same layout, but at the version the image pins, its manifest's GPG signature and checksum verified; auto-update off | **adapted**: not redistributed in the image, still reproducible, and `install.sh` does not check the signature |
 | Launcher that unsets `ANTHROPIC_API_KEY` | not needed: no API key is ever passed in | **simplified**: Remote Control requires the claude.ai login anyway |
 | No Remote Control configuration | `remoteControlAtStartup: true` seeded, Herdr's native restore on, `herdquay-agents verify` | **added**: the phone must reach the same live conversations, also after a restart |
-| Per-identity Git config, GitHub App tokens, `gh` shim per directory | one identity: a dedicated SSH key and a fine-grained token, both secret files; a `gh` wrapper that reads the token per process | **simplified** |
+| Per-identity Git config, GitHub App tokens (`devbox-git-credential`), `gh` shim per directory | one GitHub App: `herdquay-github`, adapted from `devbox-git-credential`, mints a token per repository for Git and an installation-wide one for the `gh` wrapper, cached on tmpfs; one commit identity (the environment's or the App's bot); no SSH to GitHub | **adapted**: one owner and one App, so no per-directory identities |
 | Healthcheck: `ss` on 2222 | `ss` on 2222 and the Herdr server answering | **adapted** |
 | `devbox doctor` scripts as acceptance tests, no CI | `herdquay doctor`, plus automated smoke and supervision tests in CI | **adapted** |
 | One bind-mounted home | a home volume and a separate workspace volume | **adapted**: separate snapshot policies on TrueNAS |

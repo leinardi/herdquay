@@ -19,8 +19,10 @@ How to run, connect to, check and recover a HerdQuay container. The local Compos
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `HERDQUAY_AUTHORIZED_KEYS_FILE` | `/run/secrets/authorized_keys` | public keys allowed to SSH in; required, rebuilt into `~/.ssh/authorized_keys` on every start |
-| `HERDQUAY_GITHUB_TOKEN_FILE` | `/run/secrets/github_token` | fine-grained GitHub token for `gh` and Git over HTTPS; optional |
-| `HERDQUAY_GIT_NAME`, `HERDQUAY_GIT_EMAIL` | unset | Git identity, written to `~/.gitconfig` only when it has none |
+| `HERDQUAY_GITHUB_APP_ID` | unset | the GitHub App's ID (or client ID); with the App key, Git and `gh` authenticate as the App ([GitHub App](#github-app)) |
+| `HERDQUAY_GITHUB_APP_KEY_FILE` | `/run/secrets/github_app_key` | the GitHub App's private key; optional |
+| `HERDQUAY_GITHUB_API_URL` | `https://api.github.com` | the REST API the tokens are minted from (the tests point it at a stub) |
+| `HERDQUAY_GIT_NAME`, `HERDQUAY_GIT_EMAIL` | unset | the commit identity, both or neither; unset, the App's bot (`<slug>[bot]`). Written to `~/.config/herdquay/identity.gitconfig` at every start; a `user.name` or `user.email` in `~/.gitconfig` overrides it |
 | `HERDQUAY_GIT_SIGNING_KEY_FILE` | `/run/secrets/git_signing_key` | armored GPG secret key without a passphrase; with `HERDQUAY_GIT_NAME` and `HERDQUAY_GIT_EMAIL`, commits and tags are signed ([Commit signing](#commit-signing)); optional |
 | `HERDQUAY_STOP_TIMEOUT` | `15` | seconds a child gets after SIGTERM before SIGKILL; keep it below the orchestrator's stop grace period (30 s in the harness) |
 | `HERDQUAY_AGENT_RESTORE` | `0` | `1` makes `herdquay-agents` resume the Claude agents itself (turn Herdr's native restore off with it) |
@@ -28,8 +30,45 @@ How to run, connect to, check and recover a HerdQuay container. The local Compos
 | `HERDQUAY_CLAUDE_INSTALL_TIMEOUT` | `300` | seconds each Claude Code download may take |
 | `HERDQUAY_AGENT_VERIFY_DELAY` | `120` | seconds after start before `herdquay-agents verify` checks the resumed sessions |
 
-The SSH key for GitHub is always read from `/run/secrets/github_ssh_key`
-(`/etc/ssh/ssh_config.d/herdquay.conf`).
+The entrypoint writes the GitHub variables that are set (never a key) to
+`~/.config/herdquay/github.env` at every start, because SSH sessions do not inherit the
+container's environment.
+
+### GitHub App
+
+HerdQuay reaches GitHub over HTTPS only, as a GitHub App. The only long-lived secret is the App's
+private key; `herdquay-github` mints installation tokens from it, valid for one hour:
+
+- **Git**: the credential helper (`/etc/gitconfig`, `credential.useHttpPath`) asks for a token
+  restricted to the one repository being pushed or fetched. SSH remotes and clone URLs
+  (`git@github.com:…`, `ssh://git@github.com/…`) are rewritten to HTTPS, so existing clones keep
+  working.
+- **`gh`**: the wrapper puts an installation-wide token in `GH_TOKEN` for its own process; an
+  explicit `GH_TOKEN` or `GITHUB_TOKEN` wins. Pull requests and issues it creates show the App's
+  bot as their author.
+- Tokens are cached in `/tmp/herdquay-github` (tmpfs) and minted again five minutes before they
+  expire; nothing is stored on the home volume or in `~/.config/gh/hosts.yml`.
+
+Not supported with an App token: anything that acts as a user, such as `gh api user`, and
+authenticated Gist operations (Gists belong to a user, so there is no credential helper for
+`gist.github.com`).
+
+Set up the App once, on the GitHub account that owns the repositories:
+
+1. Settings → Developer settings → GitHub Apps → New GitHub App. Its name gives the slug, and the
+   bot's name `<slug>[bot]`. Turn the webhook off. Install it only on this account.
+2. Repository permissions: Contents read and write, Pull requests read and write, Issues read and
+   write, Workflows read and write, Actions read-only, Metadata read-only. Nothing else.
+3. Note the App ID on the App's page, and generate a private key (a `.pem` download).
+4. Install the App on "Only select repositories" and pick them (a deployment may manage the
+   selection as code). A repository outside it fails with "the GitHub App is not installed on
+   `<owner>/<repo>`".
+5. Provide the key as the `github_app_key` secret and the ID as `HERDQUAY_GITHUB_APP_ID`
+   ([Local harness](#local-harness), [deployment.md](deployment.md)), then delete the download.
+
+The commit identity is the App's bot (`<id>+<slug>[bot]@users.noreply.github.com`) unless
+`HERDQUAY_GIT_NAME` and `HERDQUAY_GIT_EMAIL` set another one, for example the owner's own name and
+email. `herdquay doctor` shows the identity and where it comes from.
 
 ### Claude Code at first start
 
@@ -86,11 +125,14 @@ make compose-logs
 make compose-down       # stops it; the home and workspace volumes stay
 ```
 
-With GitHub credentials, provision them too; `make compose-up` then adds `compose.github.yaml`:
+With the GitHub App, provision its key too; `make compose-up` then adds `compose.github.yaml`,
+which needs `HERDQUAY_GITHUB_APP_ID` in the shell or in `.env` (and takes `HERDQUAY_GIT_NAME` and
+`HERDQUAY_GIT_EMAIL` from there too):
 
 ```bash
 scripts/local-secrets.sh --authorized-keys ~/.ssh/id_ed25519.pub \
-  --github-ssh-key ~/.ssh/herdquay_github --github-token-file /path/to/token-file
+  --github-app-key ~/Downloads/herdquay.2026-10-24.private-key.pem
+HERDQUAY_GITHUB_APP_ID=123456 make compose-up
 ```
 
 The files stay yours, mode 0600, and a POSIX ACL lets UID 568 read them, nobody else (the script
@@ -145,8 +187,52 @@ conversations do.
 
 ```bash
 herdquay doctor            # identity, services, secrets, tools: ok / warn / FAIL
-herdquay doctor --network  # also authenticates to GitHub over SSH and with the token
+herdquay doctor --network  # also mints an App token, lists a repository, git ls-remote over HTTPS
 ```
+
+## Upgrades
+
+### Identity seeded by an older image
+
+Images before the GitHub App wrote `HERDQUAY_GIT_NAME` and `HERDQUAY_GIT_EMAIL` once into the
+persistent `~/.gitconfig`. Those entries still override the identity the entrypoint now writes,
+and nothing removes them: a seeded value cannot be told apart from one set by hand.
+`herdquay doctor` warns when `~/.gitconfig` sets a `user.name` or `user.email` that differs from
+the configured identity. If they were seeded, remove them:
+
+```bash
+git config --global --unset user.name
+git config --global --unset user.email
+```
+
+### Upgrading from the SSH key
+
+Removing the old mounts and configuration revokes nothing: the SSH key and the fine-grained token
+keep working on GitHub until they are revoked. Once `herdquay doctor --network` passes with the
+App:
+
+1. Remove HerdQuay's SSH authentication key from the account: `gh ssh-key list`, then
+   `gh ssh-key delete <id>` for the HerdQuay key, or Settings → SSH and GPG keys.
+2. Revoke the fine-grained token, if one was created: Settings → Developer settings → Personal
+   access tokens → Fine-grained tokens → delete.
+3. Check that the old credentials fail, before deleting the local copies in the next step (skip a
+   credential that never existed). With no user config, no agent and only the retired key, so
+   that no other identity can authenticate instead, this answers
+   `Permission denied (publickey)`:
+
+   ```bash
+   ssh -F /dev/null -o IdentityAgent=none -o IdentitiesOnly=yes -i <old key> -T git@github.com
+   ```
+
+   and this returns 401:
+
+   ```bash
+   curl -fsS -H "Authorization: Bearer <old token>" https://api.github.com/user
+   ```
+
+4. Retire the copies: delete the private key and token files wherever they were generated or
+   kept (the desktop, `local/secrets/github_ssh_key` and `github_token`), and any old
+   `github_ssh_key` or `github_token` secret of the deployment (`docker secret rm`).
 
 ## Recovery
 
@@ -154,6 +240,8 @@ herdquay doctor --network  # also authenticates to GitHub over SSH and with the 
 | --- | --- |
 | The host key changed unexpectedly | stop: a new key means the home volume was replaced. If intended, remove the old `known_hosts` entry and compare the new fingerprint from the logs |
 | Locked out (lost the authorized key) | update the authorized keys secret and restart; the file is rebuilt on every start |
+| Git or `gh` fails with "the GitHub App is not installed on …" | add the repository to the App's installation |
+| Git or `gh` fails to mint a token (HTTP 401) | the App key or `HERDQUAY_GITHUB_APP_ID` is wrong, or the key was deleted in the App's settings: generate a new key, update the secret, restart |
 | Claude asks to log in again | `/login` in a pane; the credentials live in `~/.claude/.credentials.json` on the home volume |
 | Claude Code is missing or not the pinned version | the start log says why; restart, or run `herdquay-claude-install` in a shell |
 | A conversation did not come back | `herdquay doctor` names it; `claude --resume <id>` in its directory |

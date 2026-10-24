@@ -28,12 +28,13 @@ make compose-up          # builds and starts it; SSH on 127.0.0.1:2222
 make image-test          # smoke and supervision tests
 ```
 
-Then connect with Herdr and log in to Claude: [docs/operations.md](docs/operations.md).
+Then connect with Herdr and log in to Claude: [docs/operations.md](docs/operations.md). For
+GitHub, set up a GitHub App ([GitHub App](docs/operations.md#github-app)).
 
 ## Documentation
 
-- [Operations](docs/operations.md): interface, first connection, restarts, `herdquay doctor`,
-  recovery.
+- [Operations](docs/operations.md): interface, the GitHub App, commit signing, first connection,
+  restarts, `herdquay doctor`, upgrades, recovery.
 - [Security model](docs/security.md): boundaries, secrets, accepted risks, supply chain.
 - [Development environment](docs/dev-environment.md): the toolchains, the projects they were
   chosen from, what does not run inside.
@@ -47,8 +48,8 @@ Then connect with Herdr and log in to Claude: [docs/operations.md](docs/operatio
 - An Ubuntu 26.04 LTS base (`ubuntu:26.04`), pinned by tag so the official image's security
   rebuilds are picked up: the owner's desktop release, close to GitHub's Ubuntu runners.
 - No root at runtime: SSH, Herdr and Claude run as one unprivileged user, UID:GID 568:568.
-- Nothing secret in the image or in Git: the GitHub SSH key and token arrive as secret files at
-  run time.
+- Nothing secret in the image or in Git: the GitHub App's private key arrives as a secret file at
+  run time, and Git and `gh` use short-lived installation tokens minted from it, over HTTPS only.
 - No Docker socket, no read-write Docker API, no published web port.
 - Every downloaded tool pinned and verified against its upstream checksum or signature.
 
@@ -67,8 +68,9 @@ See [AGENTS.md](AGENTS.md) for the conventions and the validation matrix.
 
 ## Credits
 
-The SSH and Herdr setup follows ideas from [rozsival/devbox](https://github.com/rozsival/devbox)
-(MIT). Any file adapted from it says so in its header.
+The SSH and Herdr setup and the GitHub App credential helper follow ideas from
+[rozsival/devbox](https://github.com/rozsival/devbox) (MIT). Any file adapted from it says so in
+its header.
 
 ## License
 
