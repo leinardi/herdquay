@@ -58,7 +58,8 @@ for child in sshd herdr; do
 	docker exec "${name}" pkill -x "${child}"
 	code="$(wait_exit "${name}" 10)"
 	[[ ${code} != 0 ]] || die "killing ${child} left exit code 0"
-	docker logs "${name}" 2>&1 | grep -q "stopping sshd and the Herdr server" || die "no orderly shutdown after ${child} died"
+	grep -q "stopping sshd and the Herdr server" <<<"$(docker logs "${name}" 2>&1)" ||
+		die "no orderly shutdown after ${child} died"
 	pass "${child} killed: container exited ${code}, the other child stopped"
 done
 
@@ -88,7 +89,8 @@ docker stop -t 30 "${name}" >/dev/null
 elapsed=$((SECONDS - start))
 ((elapsed >= HERDQUAY_STOP_TIMEOUT && elapsed <= HERDQUAY_STOP_TIMEOUT + 5)) ||
 	die "stop with a frozen child took ${elapsed}s (expected about ${HERDQUAY_STOP_TIMEOUT}s)"
-docker logs "${name}" 2>&1 | grep -q "ignored SIGTERM" || die "the frozen child was not reported"
+# Captured first: under pipefail, grep -q exiting at its first match would SIGPIPE docker logs.
+grep -q "ignored SIGTERM" <<<"$(docker logs "${name}" 2>&1)" || die "the frozen child was not reported"
 pass "a child ignoring SIGTERM is killed after ${HERDQUAY_STOP_TIMEOUT}s (stop took ${elapsed}s)"
 
 echo "supervision: all checks passed"
