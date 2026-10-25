@@ -45,9 +45,14 @@ log() {
 }
 
 # The default toolchain's rustc version (1.99.1), empty when there is none or it does not run.
+# Asked of the default by name: a plain rustc runs the toolchain a rust-toolchain.toml or
+# RUSTUP_TOOLCHAIN overrides it with, which the default's minimum says nothing about.
 rustc_version() {
-	local out
-	out="$(timeout 30 "${CARGO_HOME}/bin/rustc" --version 2>/dev/null)" || return 0
+	local toolchain out
+	toolchain="$(timeout 30 "${RUSTUP}" default 2>/dev/null)" || return 0
+	toolchain="${toolchain%% *}"
+	[[ -n ${toolchain} ]] || return 0
+	out="$(RUSTUP_AUTO_INSTALL=0 timeout 30 "${RUSTUP}" run "${toolchain}" rustc --version 2>/dev/null)" || return 0
 	out="$(awk '{print $2}' <<<"${out}")"
 	out="${out%%-*}"
 	[[ ${out} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && printf '%s\n' "${out}"

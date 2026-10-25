@@ -128,6 +128,17 @@ wait_healthy() {
 	die "${name} did not become healthy (${status})"
 }
 
+# wait_log <name> <regex> <seconds>: waits for a line matching <regex> in the container's log.
+wait_log() {
+	local name="$1" pattern="$2" seconds="$3" i
+	for ((i = 0; i < seconds; i++)); do
+		grep -q -- "${pattern}" <<<"$(docker logs "${name}" 2>&1)" && return 0
+		sleep 1
+	done
+	docker logs "${name}" 2>&1 | tail -n 20 >&2
+	die "${name}: no '${pattern}' in the log after ${seconds}s"
+}
+
 ssh_port() {
 	docker port "$1" 2222/tcp | head -n 1 | sed 's/.*://'
 }

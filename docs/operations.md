@@ -98,13 +98,17 @@ download.
 
 ### Rust
 
-Rust is not in the image either, only rustup's installer, verified at build. At start,
-`herdquay-rust-install` installs rustup and the stable toolchain (minimal profile, with `rustfmt`
-and `clippy`) into `~/.rustup` and `~/.cargo`, on the home volume. The image's Rust version is a
+Rust is not in the image either, only rustup's installer, verified at build. At start, once sshd
+and Herdr run, `herdquay-rust-install` installs rustup and the stable toolchain (minimal profile,
+with `rustfmt` and `clippy`) into `~/.rustup` and `~/.cargo`, on the home volume. It runs in the
+background, unsupervised, so a slow first download never holds up SSH or the healthcheck: until
+the start log says `Rust ... installed`, `cargo` may be missing. The image's Rust version is a
 minimum, not a pin: `rustup update` upgrades rustup and the toolchains whenever needed, without a
 new image, and a project's `rust-toolchain.toml` installs its own channel on first use. A start
 leaves a default toolchain at or above the minimum alone, with no network access; only a missing
 rustup or an older default toolchain makes it install the current stable (and make it the default).
+Both it and `herdquay doctor` check the default toolchain by name, never a checkout's
+`rust-toolchain.toml` override.
 
 If rustup cannot be installed, the container still starts without Rust: `herdquay doctor` fails
 on it, and the next start tries again. The first start needs outbound HTTPS to

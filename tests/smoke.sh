@@ -83,10 +83,17 @@ commit() {
 	in_ssh "${name}" "cd \"\$(mktemp -d)\" && git init -q && git commit -q --allow-empty -m probe && ${*:-git cat-file commit HEAD}"
 }
 
+# wait_rust <name>: herdquay-rust-install runs in the background once sshd and Herdr are up, and
+# the first start's download can outlast the healthcheck; waits for its result in the log.
+wait_rust() {
+	wait_log "$1" "Rust .* installed (the image's minimum is\\|warning: Rust is not installed" 600
+}
+
 make_secrets
 start_with_stub "${TEST_ID}" "${TEST_ID}-home" -v "${SIGNING_KEY_MOUNT}"
 wait_healthy "${TEST_ID}"
 pass "container healthy"
+wait_rust "${TEST_ID}"
 
 [[ $(in_ssh "${TEST_ID}" 'id -u'):$(in_ssh "${TEST_ID}" 'id -g') == 568:568 ]] || die "SSH session is not 568:568"
 pass "SSH login as 568:568"
@@ -247,6 +254,7 @@ docker run --rm --entrypoint bash "${IMAGE}" -c '! command -v opencode' >/dev/nu
 	die "the image puts its own opencode on the PATH"
 pass "${opencode_version}: copied into ~/.opencode/bin, the only one on the PATH"
 
+wait_rust "${TEST_ID}-2"
 rust_minimum="$(docker exec "${TEST_ID}-2" sed -n 's/^HERDQUAY_RUST_MINIMUM=//p' /usr/local/share/herdquay/rust-release)"
 [[ $(in_ssh "${TEST_ID}-2" 'command -v cargo') == /home/herdquay/.cargo/bin/cargo ]] ||
 	die "cargo does not run from ~/.cargo/bin"
@@ -257,6 +265,18 @@ grep -q "Rust .* installed (the image's minimum is ${rust_minimum})" <<<"$(docke
 if in_ssh "${TEST_ID}-2" 'HERDQUAY_RUST_MINIMUM=999.0.0 herdquay-rust-install' >/dev/null 2>&1; then
 	die "herdquay-rust-install accepted a toolchain below its minimum"
 fi
+# A checkout pinning a toolchain that is not installed: both check the default, not the override.
+pinned_checkout='mkdir -p /tmp/pinned && cd /tmp/pinned && printf "[toolchain]\nchannel = \"1.0.0\"\n" >rust-toolchain.toml'
+grep -q "^  ok    Rust .*, at or above the image's ${rust_minimum}" <<<"$(in_ssh "${TEST_ID}-2" "${pinned_checkout} && herdquay doctor" || true)" ||
+	die "herdquay doctor checks a rust-toolchain.toml override, not the default toolchain"
+in_ssh "${TEST_ID}-2" "${pinned_checkout} && RUSTUP_AUTO_INSTALL=0 herdquay-rust-install" >/dev/null 2>&1 ||
+	die "herdquay-rust-install checks a rust-toolchain.toml override, not the default toolchain"
+# Without a working rustup, the doctor reports it and still runs to its summary.
+out="$(in_ssh "${TEST_ID}-2" 'RUSTUP_HOME=/nonexistent herdquay doctor' || true)"
+grep -q '^  FAIL  Rust: no default toolchain' <<<"${out}" ||
+	die "herdquay doctor does not report a missing Rust toolchain"
+grep -q '^[0-9]* failure(s), [0-9]* warning(s)$' <<<"${out}" ||
+	die "herdquay doctor stops at a missing Rust toolchain"
 docker run --rm --entrypoint bash "${IMAGE}" -c '! command -v rustc && ! command -v cargo && ! command -v rustup' >/dev/null ||
 	die "the image itself puts Rust on the PATH"
 pass "Rust: rustup and stable in the home volume at or above ${rust_minimum}, not in the image"
@@ -301,6 +321,7 @@ docker rm -f "${TEST_ID}-2" >/dev/null
 start_with_stub "${TEST_ID}-3" "${TEST_ID}-home" \
 	-e HERDQUAY_GIT_NAME="HerdQuay Test" -e HERDQUAY_GIT_EMAIL=test@example.invalid
 wait_healthy "${TEST_ID}-3"
+wait_rust "${TEST_ID}-3"
 [[ $(in_ssh "${TEST_ID}-3" 'git var GIT_AUTHOR_IDENT' | sed 's/> .*/>/') == 'Old Seeded <old@example.invalid>' ]] ||
 	die "the seeded ~/.gitconfig identity did not stay effective"
 [[ $(in_ssh "${TEST_ID}-3" 'sha256sum ~/.gitconfig') == "${gitconfig}" ]] || die "the home's .gitconfig was changed"
@@ -317,6 +338,7 @@ docker rm -f "${TEST_ID}-3" >/dev/null
 start_with_stub "${TEST_ID}-4" "${TEST_ID}-home" -v "${SIGNING_KEY_MOUNT}" \
 	-e HERDQUAY_GIT_NAME="HerdQuay Test" -e HERDQUAY_GIT_EMAIL=test@example.invalid
 wait_healthy "${TEST_ID}-4"
+wait_rust "${TEST_ID}-4"
 grep -q '^gpgsig' <<<"$(commit "${TEST_ID}-4")" || die "a commit with the signing key is not signed"
 grep -qF "${SIGNING_UID}" <<<"$(commit "${TEST_ID}-4" 'git verify-commit HEAD 2>&1')" || die "git verify-commit failed"
 in_ssh "${TEST_ID}-4" 'test ! -e ~/.gnupg' || die "a .gnupg directory was created on the home volume"

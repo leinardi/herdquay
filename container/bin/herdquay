@@ -48,19 +48,29 @@ fail() {
 section() { printf '\n%s\n' "$*"; }
 
 # rustup and the default toolchain in the home volume; the image's Rust version is a minimum,
-# and rustup update moves above it.
+# and rustup update moves above it. The default is asked by name, as herdquay-rust-install does:
+# in a checkout whose rust-toolchain.toml pins another channel, a plain rustc runs that one.
 check_rust() {
-	local minimum installed
+	local minimum toolchain="" installed=""
 	minimum="$(sed -n 's/^HERDQUAY_RUST_MINIMUM=//p' /usr/local/share/herdquay/rust-release)"
-	check_tool rustup rustup --version
-	check_tool cargo cargo --version
-	installed="$(rustc --version 2>/dev/null | awk '{print $2}')"
+	check_tool rustup env RUSTUP_AUTO_INSTALL=0 rustup --version
+	if command -v rustup >/dev/null; then
+		toolchain="$(timeout 30 rustup default 2>/dev/null)" || toolchain=""
+		toolchain="${toolchain%% *}"
+	fi
+	if [[ -z ${toolchain} ]]; then
+		fail "Rust: no default toolchain (restart, or run herdquay-rust-install)"
+		return
+	fi
+	check_tool cargo env RUSTUP_AUTO_INSTALL=0 rustup run "${toolchain}" cargo --version
+	installed="$(RUSTUP_AUTO_INSTALL=0 timeout 30 rustup run "${toolchain}" rustc --version 2>/dev/null)" || installed=""
+	installed="$(awk '{print $2}' <<<"${installed}")"
 	installed="${installed%%-*}"
 	if [[ -n ${minimum} && ${installed} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ &&
 		$(printf '%s\n' "${installed}" "${minimum}" | sort -V | head -n 1) == "${minimum}" ]]; then
-		ok "Rust ${installed}, at or above the image's ${minimum}"
+		ok "Rust ${installed} (${toolchain}), at or above the image's ${minimum}"
 	else
-		fail "Rust is not installed at or above the image's ${minimum:-version} (restart, or run herdquay-rust-install)"
+		fail "Rust ${installed:-is not working} (${toolchain}), not at or above the image's ${minimum:-version} (restart, or run herdquay-rust-install)"
 	fi
 }
 

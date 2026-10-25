@@ -27,10 +27,11 @@
 # the other is stopped and the container exits non-zero so the orchestrator restarts it. A
 # requested stop (SIGTERM, SIGINT) stops both within HERDQUAY_STOP_TIMEOUT seconds and exits 0.
 # Claude Code itself is installed into the home volume first (herdquay-claude-install;
-# HERDQUAY_CLAUDE_INSTALL=0 skips it), and so are opencode (install_opencode) and Rust
-# (herdquay-rust-install; HERDQUAY_RUST_INSTALL=0 skips it): all three then update (rustup update
-# for Rust), and the image's versions are only minimums. The Git identity and the GitHub App's configuration for SSH
-# sessions are rewritten in ~/.config/herdquay at every start. Herdr's native restore resumes the
+# HERDQUAY_CLAUDE_INSTALL=0 skips it), and so is opencode (install_opencode); Rust follows once
+# sshd and Herdr run, in the background (herdquay-rust-install; HERDQUAY_RUST_INSTALL=0 skips it).
+# All three then update (rustup update for Rust), and the image's versions are only minimums. The
+# Git identity and the GitHub App's configuration for SSH sessions are rewritten in
+# ~/.config/herdquay at every start. Herdr's native restore resumes the
 # previous run's Claude agents; once Herdr answers, herdquay-agents checks that it did, in the
 # background and unsupervised (a miss is logged, never fatal). HERDQUAY_AGENT_RESTORE=1 makes
 # herdquay-agents resume them itself instead, the fallback for a Herdr release whose headless
@@ -289,9 +290,6 @@ main() {
 	if [[ ${CLAUDE_INSTALL} == 1 ]]; then
 		herdquay-claude-install || log "warning: Claude Code is not installed; the next start retries"
 	fi
-	if [[ ${RUST_INSTALL} == 1 ]]; then
-		herdquay-rust-install || log "warning: Rust is not installed at the image's minimum; the next start retries"
-	fi
 
 	# The layout of the previous run, read by herdquay-agents before the new server rewrites it.
 	if [[ -s ${HERDR_DIR}/session.json ]]; then
@@ -312,6 +310,11 @@ main() {
 	(cd "${HOME}" && exec setsid herdr server) &
 	herdr_pid=$!
 	log "started sshd (pid ${sshd_pid}) and the Herdr server (pid ${herdr_pid})"
+	# After sshd and Herdr, in the background and unsupervised: a first download can take longer
+	# than the healthcheck's start period, and nothing at start needs Rust.
+	if [[ ${RUST_INSTALL} == 1 ]]; then
+		(herdquay-rust-install || log "warning: Rust is not installed at the image's minimum; the next start retries") &
+	fi
 
 	if wait_for_herdr; then
 		for agent in claude opencode; do
