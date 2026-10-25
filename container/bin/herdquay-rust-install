@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+#
+# MIT License
+#
+# Copyright (c) 2026 Roberto Leinardi
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+#
+# Installs rustup and a stable Rust toolchain into the home volume (~/.rustup, ~/.cargo), from the
+# rustup-init the image verified at build. The image's Rust version is only a minimum: the owner
+# upgrades with `rustup update` without a new image, and a project's rust-toolchain.toml installs
+# its own channel on first use. A missing rustup is installed; a default toolchain below the
+# minimum is replaced with the current stable; anything at or above it is left as it is, with no
+# network access.
+#
+# Usage: herdquay-rust-install
+
+set -euo pipefail
+
+RELEASE_FILE=/usr/local/share/herdquay/rust-release
+MINIMUM="${HERDQUAY_RUST_MINIMUM:-$(sed -n 's/^HERDQUAY_RUST_MINIMUM=//p' "${RELEASE_FILE}")}"
+TIMEOUT="${HERDQUAY_RUST_INSTALL_TIMEOUT:-600}"
+RUSTUP_INIT=/usr/local/share/herdquay/rustup-init
+export CARGO_HOME="${HOME}/.cargo" RUSTUP_HOME="${HOME}/.rustup"
+RUSTUP="${CARGO_HOME}/bin/rustup"
+
+log() {
+	printf '%s herdquay-rust-install: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2
+}
+
+# The default toolchain's rustc version (1.99.1), empty when there is none or it does not run.
+# Asked of the default by name: a plain rustc runs the toolchain a rust-toolchain.toml or
+# RUSTUP_TOOLCHAIN overrides it with, which the default's minimum says nothing about.
+rustc_version() {
+	local toolchain out
+	toolchain="$(timeout 30 "${RUSTUP}" default 2>/dev/null)" || return 0
+	toolchain="${toolchain%% *}"
+	[[ -n ${toolchain} ]] || return 0
+	out="$(RUSTUP_AUTO_INSTALL=0 timeout 30 "${RUSTUP}" run "${toolchain}" rustc --version 2>/dev/null)" || return 0
+	out="$(awk '{print $2}' <<<"${out}")"
+	out="${out%%-*}"
+	[[ ${out} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && printf '%s\n' "${out}"
+	return 0
+}
+
+at_least() {
+	[[ $(printf '%s\n' "$1" "$2" | sort -V | head -n 1) == "$2" ]]
+}
+
+[[ ${MINIMUM} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+	log "error: no valid minimum Rust version (${RELEASE_FILE})"
+	exit 1
+}
+[[ ${TIMEOUT} =~ ^[0-9]+$ ]] || {
+	log "error: HERDQUAY_RUST_INSTALL_TIMEOUT must be a whole number of seconds"
+	exit 1
+}
+
+if [[ ! -x ${RUSTUP} ]]; then
+	log "installing rustup and the stable toolchain into ${CARGO_HOME}"
+	timeout "${TIMEOUT}" "${RUSTUP_INIT}" -y --no-modify-path --profile minimal \
+		--component rustfmt,clippy --default-toolchain stable >&2
+fi
+
+current="$(rustc_version)"
+if [[ -n ${current} ]] && at_least "${current}" "${MINIMUM}"; then
+	log "Rust ${current} installed (the image's minimum is ${MINIMUM})"
+	exit 0
+fi
+
+log "the default toolchain (${current:-none}) is below the image's minimum ${MINIMUM}: installing the current stable"
+timeout "${TIMEOUT}" "${RUSTUP}" toolchain install stable --profile minimal --component rustfmt,clippy >&2
+"${RUSTUP}" default stable >&2
+current="$(rustc_version)"
+if [[ -z ${current} ]] || ! at_least "${current}" "${MINIMUM}"; then
+	log "error: Rust ${current:-is not installed}, still below the image's minimum ${MINIMUM}"
+	exit 1
+fi
+log "Rust ${current} installed (the image's minimum is ${MINIMUM})"

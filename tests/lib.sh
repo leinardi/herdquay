@@ -111,6 +111,7 @@ start_container() {
 		-e HERDQUAY_GITHUB_API_URL="${STUB_API_URL}" \
 		-e HERDQUAY_STOP_TIMEOUT="${HERDQUAY_STOP_TIMEOUT:-5}" \
 		-e HERDQUAY_CLAUDE_INSTALL="${HERDQUAY_CLAUDE_INSTALL:-1}" \
+		-e HERDQUAY_RUST_INSTALL="${HERDQUAY_RUST_INSTALL:-1}" \
 		"${options[@]}" "${IMAGE}" "${arguments[@]}" >/dev/null
 }
 
@@ -125,6 +126,17 @@ wait_healthy() {
 	done
 	docker logs "${name}" 2>&1 | tail -n 20 >&2
 	die "${name} did not become healthy (${status})"
+}
+
+# wait_log <name> <regex> <seconds>: waits for a line matching <regex> in the container's log.
+wait_log() {
+	local name="$1" pattern="$2" seconds="$3" i
+	for ((i = 0; i < seconds; i++)); do
+		grep -q -- "${pattern}" <<<"$(docker logs "${name}" 2>&1)" && return 0
+		sleep 1
+	done
+	docker logs "${name}" 2>&1 | tail -n 20 >&2
+	die "${name}: no '${pattern}' in the log after ${seconds}s"
 }
 
 ssh_port() {

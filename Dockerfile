@@ -78,8 +78,12 @@ ARG GOLANGCI_LINT_VERSION=2.14.0
 ARG GOLANGCI_LINT_SHA256=ab90aeb7b066f92a33415b638a50fe5344bbb75a0d32ad30cc248d88f81032ab
 ARG GORELEASER_VERSION=2.18.1
 ARG GORELEASER_SHA256=0c6122af0ad8fd65638889bf7d3757148b2f80eeff9f079682f0655df66ec8e8
-ARG HADOLINT_VERSION=2.15.1
-ARG HADOLINT_SHA256=c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
+# Dockerfile Roast for the projects' tests that run it directly (their pre-commit hooks build their
+# own) and ShellCheck, which its required ShellCheck bridge runs from PATH.
+ARG DROAST_VERSION=1.7.0
+ARG DROAST_SHA256=cadb963a040ba2e68641af764f794e5d4fb3371bb9b92255fa5027060b08ea6e
+ARG SHELLCHECK_VERSION=0.11.0
+ARG SHELLCHECK_SHA256=8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
 ARG YQ_VERSION=4.54.1
 ARG YQ_SHA256=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
 RUN fetch() { curl -fsSL -o "$1" "$2" && echo "$3  $1" | sha256sum --check --strict -; } \
@@ -99,17 +103,31 @@ RUN fetch() { curl -fsSL -o "$1" "$2" && echo "$3  $1" | sha256sum --check --str
 		"${GORELEASER_SHA256}" \
 	&& tar -xzf /tmp/goreleaser.tar.gz -C /tmp goreleaser \
 	&& install -D -m 0755 /tmp/goreleaser /usr/local/bin/goreleaser \
-	&& fetch /usr/local/bin/hadolint \
-		"https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64" \
-		"${HADOLINT_SHA256}" \
+	&& fetch /usr/local/bin/droast \
+		"https://github.com/immanuwell/dockerfile-roast/releases/download/${DROAST_VERSION}/droast-linux-x86_64" \
+		"${DROAST_SHA256}" \
+	&& fetch /tmp/shellcheck.tar.xz \
+		"https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" \
+		"${SHELLCHECK_SHA256}" \
+	&& tar -xJf /tmp/shellcheck.tar.xz -C /tmp \
+	&& install -D -m 0755 "/tmp/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck \
 	&& fetch /usr/local/bin/yq \
 		"https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" \
 		"${YQ_SHA256}" \
 	&& fetch /usr/local/bin/chezmoi \
 		"https://github.com/twpayne/chezmoi/releases/download/v${CHEZMOI_VERSION}/chezmoi-linux-amd64" \
 		"${CHEZMOI_SHA256}" \
-	&& chmod 0755 /usr/local/bin/hadolint /usr/local/bin/yq /usr/local/bin/chezmoi \
+	&& chmod 0755 /usr/local/bin/droast /usr/local/bin/yq /usr/local/bin/chezmoi \
 	&& rm -rf /tmp/*
+
+# rustup's installer, which herdquay-rust-install runs at start to put rustup and a stable toolchain
+# into the home volume. Digest from the .sha256 file next to the archived release.
+ARG RUSTUP_VERSION=1.29.2
+ARG RUSTUP_SHA256=5be191e8c70a5007074254cb74d78dbfdd25cd5a61c27de7b8e5410122ec24f4
+RUN curl -fsSL -o /usr/local/bin/rustup-init \
+	"https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/x86_64-unknown-linux-gnu/rustup-init" \
+	&& echo "${RUSTUP_SHA256}  /usr/local/bin/rustup-init" | sha256sum --check --strict - \
+	&& chmod 0755 /usr/local/bin/rustup-init
 
 # opencode 2 ships only on npm, as one package per platform (what https://opencode.ai/v2/install
 # downloads). Checked against the registry's SHA-512 integrity for that version:
@@ -218,7 +236,8 @@ COPY --from=fetch \
 	/usr/local/bin/herdr \
 	/usr/local/bin/golangci-lint \
 	/usr/local/bin/goreleaser \
-	/usr/local/bin/hadolint \
+	/usr/local/bin/droast \
+	/usr/local/bin/shellcheck \
 	/usr/local/bin/yq \
 	/usr/local/bin/
 
@@ -277,6 +296,13 @@ RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) -exec chmod ug-s {} + 
 # opencode outside the PATH: the entrypoint copies it into the home volume, where it updates
 # itself. After the chmod above, which would copy it into one more layer.
 COPY --from=fetch /usr/local/bin/opencode /usr/local/share/herdquay/opencode
+COPY --from=fetch /usr/local/bin/rustup-init /usr/local/share/herdquay/rustup-init
+
+# The minimum Rust version herdquay-rust-install holds the default toolchain to, in a file for the
+# same reason as the Claude Code pin below. rustup itself, and the toolchains above it, update in the
+# home volume (rustup update).
+ARG RUST_MINIMUM=1.99.1
+RUN printf 'HERDQUAY_RUST_MINIMUM=%s\n' "${RUST_MINIMUM}" >/usr/local/share/herdquay/rust-release
 
 # The Claude Code release to install and the fingerprint its manifest must be signed with, in a
 # file rather than ENV so that SSH sessions (herdquay doctor) read the same pin.
@@ -300,7 +326,7 @@ ENV HOME=/home/herdquay \
 	USER=herdquay \
 	SHELL=/bin/bash \
 	LANG=C.UTF-8 \
-	PATH=/home/herdquay/.local/bin:/home/herdquay/.opencode/bin:/home/herdquay/go/bin:/usr/local/go/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+	PATH=/home/herdquay/.local/bin:/home/herdquay/.opencode/bin:/home/herdquay/.cargo/bin:/home/herdquay/go/bin:/usr/local/go/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
 	GOTOOLCHAIN=auto
 
 USER ${HERDQUAY_UID}:${HERDQUAY_GID}

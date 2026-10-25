@@ -1,8 +1,9 @@
 # Updating the image
 
-Every tool is pinned in the `Dockerfile` as an `ARG`, with what verifies it. Claude Code is the one
-pin the image does not contain: `herdquay-claude-install` downloads and verifies it at the first
-start of an image that pins a new version.
+Every tool is pinned in the `Dockerfile` as an `ARG`, with what verifies it. Claude Code and Rust
+are the pins the image does not contain: `herdquay-claude-install` downloads and verifies Claude
+Code at the first start of an image that pins a new version, and `herdquay-rust-install` installs
+rustup and the stable toolchain into the home volume.
 
 Claude Code and opencode update themselves, so they follow their daily releases without a new image.
 Both live in the home volume: Claude Code in `~/.local/share/claude/versions/`, opencode in
@@ -12,6 +13,10 @@ above them, and only replaces a missing, broken or older one with the verified p
 updaters' downloads are checked only as Anthropic's and opencode's own updaters check them (over
 HTTPS), not with the image's pinned signature or integrity. Everything else, Herdr included, only
 changes with a new image.
+
+Rust follows the same rule: `RUST_MINIMUM` is a floor, and `rustup update` upgrades rustup and the
+toolchains in `~/.rustup` and `~/.cargo` without a new image. A start only installs the current
+stable over a missing rustup or a default toolchain below the floor.
 
 ## Routine
 
@@ -38,7 +43,10 @@ the same automated tests.
 | `NODE_VERSION`, `NODE_SHA256` | SHA-256 | the release's `SHASUMS256.txt`; stay on the 24 line until the projects move |
 | `CHEZMOI_VERSION`, `GH_VERSION`, `YQ_VERSION` (+ `_SHA256`) | release asset digest | `make check-updates` |
 | `OPENCODE_VERSION`, `OPENCODE_INTEGRITY` (a minimum) | npm's SHA-512 integrity of `@opencode/cli-linux-x64` (no build provenance) | `make check-updates`, from the package's `latest` tag; opencode updates itself in between, so bump it only to raise the floor. opencode 2 is only on npm: the GitHub releases of `anomalyco/opencode` are opencode 1 |
-| `GOLANGCI_LINT_VERSION`, `GORELEASER_VERSION`, `HADOLINT_VERSION` (+ `_SHA256`) | release asset digest | bump together with the projects that pin them (pre-commit revs, monmux's release workflow); hadolint is only for the projects' hooks, this repository lints with droast |
+| `GOLANGCI_LINT_VERSION`, `GORELEASER_VERSION` (+ `_SHA256`) | release asset digest | bump together with the projects that pin them (pre-commit revs, monmux's release workflow) |
+| `DROAST_VERSION`, `SHELLCHECK_VERSION` (+ `_SHA256`) | release asset digest | `make check-updates`; bump together with the projects' droast hook rev and their `setup-droast` and `setup-shellcheck` actions |
+| `RUSTUP_VERSION`, `RUSTUP_SHA256` | SHA-256 | `make check-updates`, from rustup's `release-stable.toml` and the archived `rustup-init.sha256`; only the installer: rustup updates itself in the home volume |
+| `RUST_MINIMUM` (a minimum) | rustup (the channel manifest's checksums), at start | `make check-updates`, from the stable channel; `rustup update` moves above it in between, so bump it only to raise the floor |
 | `DOCKER_CLI_VERSION`, `DOCKER_BUILDX_VERSION`, `DOCKER_COMPOSE_VERSION` | Docker's apt signature, key fingerprint `DOCKER_SIGNER_FINGERPRINT` | `make check-updates` reads Docker's Ubuntu `resolute` `Packages` index |
 | `.github/actions/setup-shellcheck` (CI only, for droast's ShellCheck bridge) | release asset digest | bump together with the `shellcheck-py` rev in `.pre-commit-config.yaml`; the droast rev itself is Dependabot's |
 | `PLAYWRIGHT_VERSION` | npm | bump together with `@playwright/test` in bitgauge and runhold |

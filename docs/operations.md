@@ -28,6 +28,8 @@ How to run, connect to, check and recover a HerdQuay container. The local Compos
 | `HERDQUAY_AGENT_RESTORE` | `0` | `1` makes `herdquay-agents` resume the Claude agents itself (turn Herdr's native restore off with it) |
 | `HERDQUAY_CLAUDE_INSTALL` | `1` | `0` skips installing Claude Code at start (the tests use it on throwaway volumes) |
 | `HERDQUAY_CLAUDE_INSTALL_TIMEOUT` | `300` | seconds each Claude Code download may take |
+| `HERDQUAY_RUST_INSTALL` | `1` | `0` skips installing rustup and the stable Rust toolchain at start ([Rust](#rust)) |
+| `HERDQUAY_RUST_INSTALL_TIMEOUT` | `600` | seconds each rustup run at start may take |
 | `HERDQUAY_AGENT_VERIFY_DELAY` | `120` | seconds after start before `herdquay-agents verify` checks the resumed sessions |
 
 The entrypoint writes the GitHub variables that are set (never a key) to
@@ -93,6 +95,24 @@ If the download or a check fails, the container still starts, without Claude Cod
 `herdquay doctor` fails on it, and the next start tries again. The first start of a new pin needs
 outbound HTTPS to `downloads.claude.ai`; the healthcheck's start period (6 minutes) covers the
 download.
+
+### Rust
+
+Rust is not in the image either, only rustup's installer, verified at build. At start, once sshd
+and Herdr run, `herdquay-rust-install` installs rustup and the stable toolchain (minimal profile,
+with `rustfmt` and `clippy`) into `~/.rustup` and `~/.cargo`, on the home volume. It runs in the
+background, unsupervised, so a slow first download never holds up SSH or the healthcheck: until
+the start log says `Rust ... installed`, `cargo` may be missing. The image's Rust version is a
+minimum, not a pin: `rustup update` upgrades rustup and the toolchains whenever needed, without a
+new image, and a project's `rust-toolchain.toml` installs its own channel on first use. A start
+leaves a default toolchain at or above the minimum alone, with no network access; only a missing
+rustup or an older default toolchain makes it install the current stable (and make it the default).
+Both it and `herdquay doctor` check the default toolchain by name, never a checkout's
+`rust-toolchain.toml` override.
+
+If rustup cannot be installed, the container still starts without Rust: `herdquay doctor` fails
+on it, and the next start tries again. The first start needs outbound HTTPS to
+`static.rust-lang.org`.
 
 ### Commit signing
 
@@ -282,6 +302,7 @@ App:
 | Git or `gh` fails to mint a token (HTTP 401) | the App key or `HERDQUAY_GITHUB_APP_ID` is wrong, or the key was deleted in the App's settings: generate a new key, update the secret, restart |
 | Claude asks to log in again | `/login` in a pane; the credentials live in `~/.claude/.credentials.json` on the home volume |
 | Claude Code is missing or older than the image's version | the start log says why; restart, or run `herdquay-claude-install` in a shell |
+| Rust is missing or older than the image's minimum | the start log says why; restart, or run `herdquay-rust-install` in a shell |
 | An update broke Claude Code or opencode | `claude install <version>` or `opencode upgrade <version>` for a working one at or above the image's; below it, a restart puts the image's back. Removing `~/.local/bin/claude` or `~/.opencode/bin/opencode` and restarting reinstalls the image's |
 | A conversation did not come back | `herdquay doctor` names it; `claude --resume <id>` in its directory |
 | Herdr's native restore stops working after an upgrade | set `resume_agents_on_restore = false` in `~/.config/herdr/config.toml` and `HERDQUAY_AGENT_RESTORE=1` |

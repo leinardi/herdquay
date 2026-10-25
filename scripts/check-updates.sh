@@ -49,22 +49,24 @@ report() {
 	fi
 }
 
-github_latest() {
-	gh api "repos/$1/releases/latest" --jq .tag_name 2>/dev/null | sed 's/^v//'
+# The latest release's tag as published: most carry a leading v, droast's do not.
+github_latest_tag() {
+	gh api "repos/$1/releases/latest" --jq .tag_name 2>/dev/null
 }
 
 github_digest() {
-	gh api "repos/$1/releases/tags/v$2" --jq ".assets[] | select(.name == \"$3\") | .digest" 2>/dev/null |
+	gh api "repos/$1/releases/tags/$2" --jq ".assets[] | select(.name == \"$3\") | .digest" 2>/dev/null |
 		sed 's/^sha256://'
 }
 
 check_github() {
-	local name="$1" repo="$2" arg="$3" asset_pattern="$4" note="${5:-}" current latest asset
+	local name="$1" repo="$2" arg="$3" asset_pattern="$4" note="${5:-}" current tag latest asset
 	current="$(pinned "${arg}")"
-	latest="$(github_latest "${repo}")"
+	tag="$(github_latest_tag "${repo}")"
+	latest="${tag#v}"
 	asset="${asset_pattern//\{v\}/${latest}}"
 	report "${name}" "${current}" "${latest}" \
-		"${arg%_VERSION}_SHA256=$(github_digest "${repo}" "${latest}" "${asset}")${note:+; ${note}}"
+		"${arg%_VERSION}_SHA256=$(github_digest "${repo}" "${tag}" "${asset}")${note:+; ${note}}"
 }
 
 echo "Release binaries"
@@ -75,8 +77,10 @@ check_github golangci-lint golangci/golangci-lint GOLANGCI_LINT_VERSION 'golangc
 	"matches the projects' pre-commit rev: bump with them"
 check_github goreleaser goreleaser/goreleaser GORELEASER_VERSION goreleaser_Linux_x86_64.tar.gz \
 	"matches monmux's release workflow: bump with it"
-check_github hadolint hadolint/hadolint HADOLINT_VERSION hadolint-linux-x86_64 \
-	"the projects' hooks run it: bump with their pre-commit rev"
+check_github droast immanuwell/dockerfile-roast DROAST_VERSION droast-linux-x86_64 \
+	"the projects pin it in their hooks and setup-droast: bump with them"
+check_github shellcheck koalaman/shellcheck SHELLCHECK_VERSION 'shellcheck-v{v}.linux.x86_64.tar.xz' \
+	"the projects' setup-shellcheck pins it: bump with them"
 check_github yq mikefarah/yq YQ_VERSION yq_linux_amd64
 
 echo "Toolchains"
@@ -100,6 +104,14 @@ report pre-commit "$(pinned PRE_COMMIT_VERSION)" \
 opencode="$(curl -fsSL https://registry.npmjs.org/@opencode%2fcli-linux-x64/latest 2>/dev/null || true)"
 report opencode "$(pinned OPENCODE_VERSION)" "$(jq -r '.version // empty' <<<"${opencode}" 2>/dev/null)" \
 	"OPENCODE_INTEGRITY=$(jq -r '.dist.integrity // empty' <<<"${opencode}" 2>/dev/null); npm, not GitHub (that is opencode 1)"
+rustup_latest="$(curl -fsSL https://static.rust-lang.org/rustup/release-stable.toml 2>/dev/null |
+	sed -n "s/^version = '\\(.*\\)'$/\\1/p")"
+report rustup "$(pinned RUSTUP_VERSION)" "${rustup_latest}" \
+	"RUSTUP_SHA256 from https://static.rust-lang.org/rustup/archive/${rustup_latest}/x86_64-unknown-linux-gnu/rustup-init.sha256; only the installer: rustup updates itself"
+report "rust (minimum)" "$(pinned RUST_MINIMUM)" \
+	"$(curl -fsSL https://static.rust-lang.org/dist/channel-rust-stable.toml 2>/dev/null |
+		sed -n '/^\[pkg.rustc\]/,/^version/s/^version = "\([0-9.]*\) .*/\1/p')" \
+	"a minimum: rustup update moves the home volume above it without a new image"
 report playwright "$(pinned PLAYWRIGHT_VERSION)" \
 	"$(curl -fsSL https://registry.npmjs.org/playwright/latest 2>/dev/null | jq -r '.version // empty')" \
 	"bump only when bitgauge and runhold bump @playwright/test"
