@@ -1,9 +1,18 @@
 # Docker access
 
-HerdQuay ships the Docker CLI with buildx and Compose, and **no Docker API at all**: no daemon in
-the container, no socket mount, `DOCKER_HOST` unset. `herdquay doctor` fails if
-`/var/run/docker.sock` ever appears and warns when `DOCKER_HOST` is set. Three separate needs,
-three separate decisions, none of them taken in this phase.
+HerdQuay ships the Docker CLI with buildx and Compose, and by default **no Docker API at all**: no
+daemon in the container, no socket mount, `DOCKER_HOST` unset. The one supported way to give it a
+daemon is a **dedicated rootless daemon** next to it ([section 3](#3-a-dedicated-rootless-daemon)),
+an opt-in of the deployment. `herdquay doctor` checks the daemon the CLI reaches (`DOCKER_HOST`, or
+the current Docker context):
+
+| The CLI reaches | Doctor |
+| --- | --- |
+| no daemon configured | ok |
+| a daemon that reports `rootless` | ok |
+| a daemon that does not report `rootless` (the host's, behind whatever path) | FAIL |
+| a configured daemon that does not answer | FAIL |
+| anything, while `/var/run/docker.sock` exists | FAIL |
 
 ## 1. Read-only diagnostics (designed, not wired)
 
@@ -32,28 +41,85 @@ Recommended design:
 4. Before enabling it, check that no service passes secrets through environment variables or
    labels, since the proxy would show them.
 
+The proxy fronts the host's daemon, which is not rootless, so `herdquay doctor` fails it as it
+stands: wiring this design up includes giving the doctor a way to tell the proxy apart.
+
 **Never** connect HerdQuay to a read-write proxy, and never fall back to one if the read-only
 proxy lacks an endpoint.
 
 ## 2. Docker CLI and Compose without an API
 
-Already available: `docker`, `docker buildx`, `docker compose` for reading, linting and
-rendering (`docker compose config`, `docker buildx bake --print`), and the projects' make targets
-that only need the CLI to exist.
+Always available: `docker`, `docker buildx`, `docker compose` for reading, linting and rendering
+(`docker compose config`, `docker buildx bake --print`), and the projects' make targets that only
+need the CLI to exist.
 
-## 3. Builds, containers, integration tests (needs a daemon)
+## 3. A dedicated rootless daemon
 
-The read-only proxy cannot do any of this (`BUILD=0`, `POST=0`). These workflows stay outside
-HerdQuay today and run in CI or on the desktop ([dev-environment.md](dev-environment.md)):
-`docker-build` in four projects, image and integration tests, runhold's privileged DinD tests, the
-bitgauge network harness.
+Builds, `docker run`, Compose and image tests need a daemon. HerdQuay gets one of its own: a
+rootless `dockerd` in a separate container next to it, with its own data root, and no access to the
+host's daemon, containers, images or volumes. What the agent breaks there (a
+`docker system prune -af --volumes` included) stays there.
 
-If they are wanted inside HerdQuay later, the options, in order of isolation:
+**One daemon per consumer.** Never share one between HerdQuay and anything else (a CI runner, a
+second environment): each could then see, exec into and delete the other's containers and volumes,
+and without per-container cgroups (below) one could starve the other.
 
-- **A remote builder off the host** (a dedicated VM or machine running a rootless BuildKit or
-  Docker daemon, reached over TLS): no new privilege on the host. The best fit.
-- **A rootless sibling daemon** for HerdQuay alone (as rozsival/devbox does): its own data root,
-  no access to the host's daemon, but it still needs relaxed seccomp/AppArmor and user
-  namespaces on the host.
-- **Never**: the host socket, a read-write proxy, or a privileged DinD container on the host.
-  Each is administrative control of the host and everything it runs.
+### What HerdQuay needs from it
+
+- `DOCKER_HOST` set to the daemon: a Unix socket on a volume shared with HerdQuay only
+  (`unix:///<path>/docker.sock`), or TCP with TLS. Never at `/var/run/docker.sock`.
+- The socket readable and writable by UID 568.
+- The daemon reports `rootless` in `docker info` (the doctor checks it).
+- HerdQuay's workspace mounted in the daemon's container **at the same path**,
+  `/home/herdquay/workspace`, so `docker run -v "$PWD:/src"` and Compose bind mounts find the files.
+- The daemon's rootless user is UID 568 too, so files that containers write into bind mounts come
+  back owned by 568. The upstream image's rootless user is 1000: with it, those files are not
+  HerdQuay's.
+
+### Running it
+
+Verified on 2026-10-25 on a TrueNAS host (kernel 6.12), Docker 29.9.2: the upstream
+`docker:dind-rootless` image (pinned by digest) runs **without `--privileged` and without any added
+capability**, with:
+
+```text
+--security-opt seccomp=unconfined     # unshare and mount, for the user namespace and overlayfs
+--security-opt apparmor=unconfined    # mounts inside the container
+--security-opt systempaths=unconfined # an unmasked /proc for the inner containers
+--device /dev/net/tun                 # slirp4netns's tap device; without it the daemon exits
+```
+
+It uses the native `overlayfs` storage driver (no vfs or fuse-overlayfs). It needs unprivileged
+user namespaces on the host. Docker Swarm ignores `security_opt`, so it runs as a plain container
+(Compose, a NAS app), on the same node as HerdQuay. Besides its socket it listens on TCP 2376 with
+TLS by default. Cap its CPU and memory on its container, and its data root with a quota: those are
+the only limits that take effect (below).
+
+### Limits
+
+- **No per-container cgroups.** Without systemd, rootless mode runs with `Cgroup Driver: none`:
+  `docker run --memory` and `--cpus` are ignored, and a container's `/sys/fs/cgroup` shows the whole
+  daemon's usage (`memory.peak` included). Tests that measure a container's own cgroup cannot run
+  here.
+- **Published ports live in the daemon's container**: `docker run -p 8080:80` answers at the
+  daemon's address on a network it shares with HerdQuay, not at HerdQuay's `localhost`.
+- **No privileged containers**, so no Docker-in-Docker inside it (runhold's DinD tests,
+  `services: docker:dind`), no BPF, no host namespaces.
+- **No kernel modules**: a container can load none. What the tests need (for example `ifb`,
+  `sch_netem`) must be loaded on the host.
+- **Network**: its containers have the daemon's network reach, the LAN included unless the
+  deployment limits its egress.
+
+### What it still risks
+
+Unconfined seccomp and user namespaces expose more of the kernel to the daemon's containers than
+HerdQuay's own container does. Escaping still takes a kernel exploit, and lands as the daemon's
+unprivileged user, not as root: with the host's socket, the API alone is root on the host. Keep the
+host's kernel up to date.
+
+### Never
+
+The host's socket, a read-write proxy to the host's daemon, or a privileged Docker-in-Docker
+container on the host. Each is administrative control of the host and everything it runs. A
+daemon on another machine is a stronger boundary than the rootless one; the doctor accepts it too
+if it runs rootless.

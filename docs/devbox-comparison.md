@@ -22,7 +22,7 @@ from devbox and credits it in its header; nothing else is copied.
 | `devbox doctor` scripts as acceptance tests, no CI | `herdquay doctor`, plus automated smoke and supervision tests in CI | **adapted** |
 | One bind-mounted home | a home volume and a separate workspace volume | **adapted**: separate snapshot policies on TrueNAS |
 | Tailscale bind address, 1Password SSH agent, Moshi, OMP, Vercel/Neon guardrails, laptop doctor | none | **omitted**: the author's environment; HerdQuay sits behind pfSense and WireGuard |
-| Rootless sibling Docker daemon, socat port mirrors | Docker CLI only, no daemon; no published ports besides SSH | **omitted**: an explicit decision ([docker-diagnostics.md](docker-diagnostics.md)) |
+| Rootless sibling Docker daemon, socat port mirrors | Docker CLI only by default; optionally a dedicated rootless daemon in its own container, checked by `herdquay doctor`; no port mirrors, no published ports besides SSH | **adapted**: an opt-in of the deployment, never shared ([docker-diagnostics.md](docker-diagnostics.md)) |
 | nvm, terraform, lazygit, worktrunk, starship | Node from a pinned tarball; the projects' toolchains ([dev-environment.md](dev-environment.md)) | **replaced or omitted** |
 
 ## Findings that devbox does not cover

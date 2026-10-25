@@ -12,8 +12,10 @@ reach, what protects the rest, and which risks are accepted on purpose.
   so nothing can raise a process's privileges even where `no-new-privileges` is not applied:
   Docker Swarm ignores `security_opt`. Every capability is dropped (`cap_drop: ALL`, which Swarm
   honours), and the harness adds `no-new-privileges` too.
-- **No Docker socket**, no read-write Docker API, no host filesystem mount. The Docker CLI is
-  installed but has no daemon ([docker-diagnostics.md](docker-diagnostics.md)).
+- **No Docker socket**, no access to the host's Docker daemon, no host filesystem mount. The
+  Docker CLI has no daemon unless the deployment adds a dedicated rootless one, whose escape lands
+  on an unprivileged host user; `herdquay doctor` fails any daemon that is not rootless
+  ([docker-diagnostics.md](docker-diagnostics.md)).
 - **SSH**: keys only, one user, the authorized keys rebuilt from a secret on every start (removing
   a key from the secret revokes it at the next restart). No published web port. Network reach is
   for the deployment to restrict ([deployment.md](deployment.md)).

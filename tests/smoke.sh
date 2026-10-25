@@ -24,6 +24,7 @@
 #
 # Smoke test of a built image: SSH as the unprivileged user, the doctor, the pinned tools, the
 # GitHub App credentials against a stub API (tests/github-stub.py, on the container's loopback),
+# the doctor's Docker check against stub daemons (tests/docker-stub.py),
 # the commit identity, agent forwarding, secret permissions, and persistence of the host key and
 # home across container recreation, and GPG commit signing (only for the custom identity, renewed
 # keys picked up). Needs no real credentials.
@@ -51,6 +52,7 @@ start_with_stub() {
 	shift 2
 	start_container "${name}" "${volume}" --entrypoint /usr/bin/tini \
 		-v "${REPO_ROOT}/tests/github-stub.py:${STUB_DIR}/github-stub.py:ro" \
+		-v "${REPO_ROOT}/tests/docker-stub.py:${STUB_DIR}/docker-stub.py:ro" \
 		-v "${APP_PUBLIC_KEY}:${STUB_DIR}/app.pub.pem:ro" \
 		"$@" -- -- bash -c "${STUB_LAUNCH}"
 }
@@ -103,6 +105,30 @@ in_ssh "${TEST_ID}" 'herdquay doctor' >"${SCRATCH}/doctor.txt" || {
 	die "herdquay doctor failed"
 }
 pass "herdquay doctor: $(tail -n 1 "${SCRATCH}/doctor.txt")"
+
+# docker_doctor <DOCKER_HOST>: the doctor's Docker line with that daemon configured.
+docker_doctor() {
+	in_ssh "${TEST_ID}" "DOCKER_HOST=$1 herdquay doctor || true" | sed -n '/^Docker$/{n;p;q}'
+}
+
+grep -q '^  ok    no Docker daemon configured' "${SCRATCH}/doctor.txt" ||
+	die "herdquay doctor does not report that no Docker daemon is configured"
+docker exec -d "${TEST_ID}" python3 "${STUB_DIR}/docker-stub.py" 18082 rootless
+docker exec -d "${TEST_ID}" python3 "${STUB_DIR}/docker-stub.py" 18083 rootful
+in_ssh "${TEST_ID}" "for i in \$(seq 100); do
+	curl -fs http://127.0.0.1:18082/_ping >/dev/null && curl -fs http://127.0.0.1:18083/_ping >/dev/null && exit 0
+	sleep 0.1
+done; exit 1" || die "the stub Docker APIs did not start"
+grep -q '^  ok    dedicated rootless Docker daemon at tcp://127.0.0.1:18082 ' <<<"$(docker_doctor tcp://127.0.0.1:18082)" ||
+	die "herdquay doctor does not accept a rootless daemon"
+grep -q '^  FAIL  the Docker daemon at tcp://127.0.0.1:18083 is not rootless' <<<"$(docker_doctor tcp://127.0.0.1:18083)" ||
+	die "herdquay doctor accepts a daemon that is not rootless"
+grep -q '^  FAIL  the Docker daemon at tcp://127.0.0.1:1 is unreachable' <<<"$(docker_doctor tcp://127.0.0.1:1)" ||
+	die "herdquay doctor does not fail on an unreachable daemon"
+grep -q '^  FAIL  /var/run/docker.sock exists' <<<"$(docker run --rm --entrypoint herdquay \
+	-v /dev/null:/var/run/docker.sock "${IMAGE}" doctor 2>&1 || true)" ||
+	die "herdquay doctor does not fail on /var/run/docker.sock"
+pass "doctor Docker check: none by default, rootless accepted, rootful, unreachable and the socket fail"
 
 # Swarm ignores no-new-privileges, so nothing in the image may raise privileges in its place.
 privileged="$(docker run --rm --entrypoint bash "${IMAGE}" -c \

@@ -88,7 +88,8 @@ user-facing contract a change must keep true.
   **critical**.
 - Nothing runs as root at run time; the final `USER` is the unprivileged user (568). A new
   capability, setuid binary, `sudo`, privileged mode, host mount or Docker socket is **high** at
-  least, and a read-write Docker API proxy is never wired in.
+  least, and no read-write path to the host's Docker daemon is ever wired in (the only daemon is the
+  dedicated rootless one of `docs/docker-diagnostics.md`).
 - The base is pinned by tag (`ubuntu:26.04`); every downloaded artifact is pinned by version and
   verified by checksum or signature before use. `curl | sh` of an unpinned script is a finding.
 - sshd keeps keys-only auth. GitHub is reached over HTTPS only, as the GitHub App: an SSH key or

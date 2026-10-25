@@ -42,7 +42,8 @@ GitHub, set up a GitHub App ([GitHub App](docs/operations.md#github-app)).
 - [Updating](docs/updating.md): every pin, how to bump it.
 - [Release](docs/release.md): versioning, the published image, verifying it, recovering a failed
   release.
-- [Docker access](docs/docker-diagnostics.md): why there is no Docker API, and the options.
+- [Docker access](docs/docker-diagnostics.md): no Docker API by default, and the optional
+  dedicated rootless daemon.
 - [Deployment](docs/deployment.md): what any deployment must provide.
 - [Comparison with rozsival/devbox](docs/devbox-comparison.md).
 
@@ -53,7 +54,8 @@ GitHub, set up a GitHub App ([GitHub App](docs/operations.md#github-app)).
 - No root at runtime: SSH, Herdr and Claude run as one unprivileged user, UID:GID 568:568.
 - Nothing secret in the image or in Git: the GitHub App's private key arrives as a secret file at
   run time, and Git and `gh` use short-lived installation tokens minted from it, over HTTPS only.
-- No Docker socket, no read-write Docker API, no published web port.
+- No Docker socket and no access to the host's Docker daemon; a daemon only as an opt-in dedicated
+  rootless one, which `herdquay doctor` checks. No published web port.
 - Every downloaded tool pinned and verified against its upstream checksum or signature.
 
 ## Development
