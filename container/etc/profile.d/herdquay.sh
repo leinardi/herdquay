@@ -23,5 +23,5 @@
 # SOFTWARE.
 #
 # Login shells (SSH sessions): the same tool paths and settings the Herdr server's panes inherit.
-export PATH="${HOME}/.local/bin:${HOME}/.opencode/bin:${HOME}/go/bin:/usr/local/go/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export PATH="${HOME}/.local/bin:${HOME}/.opencode/bin:${HOME}/.cargo/bin:${HOME}/go/bin:/usr/local/go/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export GOTOOLCHAIN=auto

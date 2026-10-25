@@ -247,6 +247,20 @@ docker run --rm --entrypoint bash "${IMAGE}" -c '! command -v opencode' >/dev/nu
 	die "the image puts its own opencode on the PATH"
 pass "${opencode_version}: copied into ~/.opencode/bin, the only one on the PATH"
 
+rust_minimum="$(docker exec "${TEST_ID}-2" sed -n 's/^HERDQUAY_RUST_MINIMUM=//p' /usr/local/share/herdquay/rust-release)"
+[[ $(in_ssh "${TEST_ID}-2" 'command -v cargo') == /home/herdquay/.cargo/bin/cargo ]] ||
+	die "cargo does not run from ~/.cargo/bin"
+grep -q "^  ok    Rust .*, at or above the image's ${rust_minimum}" <<<"$(in_ssh "${TEST_ID}-2" 'herdquay doctor' || true)" ||
+	die "herdquay doctor does not report Rust at or above ${rust_minimum}"
+grep -q "Rust .* installed (the image's minimum is ${rust_minimum})" <<<"$(docker logs "${TEST_ID}-2" 2>&1)" ||
+	die "the start log does not report Rust at or above ${rust_minimum}"
+if in_ssh "${TEST_ID}-2" 'HERDQUAY_RUST_MINIMUM=999.0.0 herdquay-rust-install' >/dev/null 2>&1; then
+	die "herdquay-rust-install accepted a toolchain below its minimum"
+fi
+docker run --rm --entrypoint bash "${IMAGE}" -c '! command -v rustc && ! command -v cargo && ! command -v rustup' >/dev/null ||
+	die "the image itself puts Rust on the PATH"
+pass "Rust: rustup and stable in the home volume at or above ${rust_minimum}, not in the image"
+
 # fake_versions <name> <version>: a stand-in Claude Code <version>, linked as Anthropic's updater
 # links one, and a stand-in opencode <version> in ~/.opencode/bin, as `opencode upgrade` leaves it.
 fake_versions() {

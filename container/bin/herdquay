@@ -47,6 +47,23 @@ fail() {
 
 section() { printf '\n%s\n' "$*"; }
 
+# rustup and the default toolchain in the home volume; the image's Rust version is a minimum,
+# and rustup update moves above it.
+check_rust() {
+	local minimum installed
+	minimum="$(sed -n 's/^HERDQUAY_RUST_MINIMUM=//p' /usr/local/share/herdquay/rust-release)"
+	check_tool rustup rustup --version
+	check_tool cargo cargo --version
+	installed="$(rustc --version 2>/dev/null | awk '{print $2}')"
+	installed="${installed%%-*}"
+	if [[ -n ${minimum} && ${installed} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ &&
+		$(printf '%s\n' "${installed}" "${minimum}" | sort -V | head -n 1) == "${minimum}" ]]; then
+		ok "Rust ${installed}, at or above the image's ${minimum}"
+	else
+		fail "Rust is not installed at or above the image's ${minimum:-version} (restart, or run herdquay-rust-install)"
+	fi
+}
+
 check_tool() {
 	local name="$1" version
 	shift
@@ -296,7 +313,9 @@ doctor() {
 	check_tool gcc gcc --version
 	check_tool golangci-lint golangci-lint version
 	check_tool goreleaser bash -c 'goreleaser --version | sed -n "s/^GitVersion: */goreleaser /p"'
-	check_tool hadolint hadolint --version
+	check_tool droast droast --version
+	check_tool shellcheck bash -c 'shellcheck --version | sed -n "s/^version: */shellcheck /p"'
+	check_rust
 	check_tool docker docker --version
 	check_tool jq jq --version
 	check_tool yq yq --version

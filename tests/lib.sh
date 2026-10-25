@@ -111,6 +111,7 @@ start_container() {
 		-e HERDQUAY_GITHUB_API_URL="${STUB_API_URL}" \
 		-e HERDQUAY_STOP_TIMEOUT="${HERDQUAY_STOP_TIMEOUT:-5}" \
 		-e HERDQUAY_CLAUDE_INSTALL="${HERDQUAY_CLAUDE_INSTALL:-1}" \
+		-e HERDQUAY_RUST_INSTALL="${HERDQUAY_RUST_INSTALL:-1}" \
 		"${options[@]}" "${IMAGE}" "${arguments[@]}" >/dev/null
 }
 

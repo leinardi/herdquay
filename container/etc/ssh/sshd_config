@@ -31,7 +31,7 @@ ClientAliveCountMax 6
 
 AcceptEnv LANG LC_* TERM COLORTERM
 # Every session, login or not (Herdr's background commands are not), gets the image's tool paths.
-SetEnv PATH=/home/herdquay/.local/bin:/home/herdquay/.opencode/bin:/home/herdquay/go/bin:/usr/local/go/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin GOTOOLCHAIN=auto LANG=C.UTF-8
+SetEnv PATH=/home/herdquay/.local/bin:/home/herdquay/.opencode/bin:/home/herdquay/.cargo/bin:/home/herdquay/go/bin:/usr/local/go/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin GOTOOLCHAIN=auto LANG=C.UTF-8
 PrintMotd no
 LogLevel INFO
 Subsystem sftp internal-sftp

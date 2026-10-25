@@ -48,7 +48,7 @@ Makefile.
 | `.github/workflows/ci.yaml` | `pre-commit-all`, `conventional-commits` and the `ci-result` aggregator; the reviewdog jobs on pull requests |
 | `.github/workflows/release.yaml`, `scheduled-scan.yaml`, `.trivyignore.yaml` | the dispatched release (image to GHCR, attested, signed; [`docs/release.md`](docs/release.md)), the weekly scan of `:latest`, and the scans' accepted findings |
 | `Dockerfile` | the image: a `fetch` stage that downloads and verifies every non-apt artifact, then the final stage on the same Ubuntu 26.04 base |
-| `container/bin/` | `herdquay-entrypoint` (supervisor), `herdquay-agents` (restore check and fallback), `herdquay-healthcheck`, `herdquay` (doctor), `herdquay-github` (GitHub App tokens, Git credential helper), `herdquay-gpg` (commit signing), the `gh` wrapper |
+| `container/bin/` | `herdquay-entrypoint` (supervisor), `herdquay-agents` (restore check and fallback), `herdquay-healthcheck`, `herdquay-claude-install` and `herdquay-rust-install` (installs into the home volume at start), `herdquay` (doctor), `herdquay-github` (GitHub App tokens, Git credential helper), `herdquay-gpg` (commit signing), the `gh` wrapper |
 | `container/etc/`, `container/share/`, `container/keys/` | sshd config, system gitconfig (credential helper, HTTPS rewrites), profile; seeded Herdr config; Anthropic's release key |
 | `compose.yaml`, `compose.github.yaml` | the local test harness (SSH on loopback), and its optional GitHub App key, App ID and signing key |
 | `scripts/local-secrets.sh`, `scripts/check-updates.sh` | the harness's ACL-provisioned secrets; the report of pins with newer releases |
