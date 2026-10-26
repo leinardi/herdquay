@@ -35,10 +35,14 @@ Next to Claude Code, the image has opencode 2.1.4 as a minimum: it is copied int
 Rust is in the home volume too: rustup and the stable toolchain, installed at start with 1.99.1
 as the minimum and upgraded with `rustup update` ([operations.md](operations.md#rust)).
 
-It also has the CLI tools an agent or a GitHub runner usually has: `gh`, `chezmoi`, `jq`, `yq`,
-`rg`, `fd`, `tree`, `wget`, `zip`/`unzip`/`xz`/`zstd`, `rsync`, `file`, `bc`, `gawk`, `sqlite3`,
-`dig`, `nc`, `ping`, `lsof`, `htop`, `strace`, `openssl`, `gpg`, `git-lfs`, `vim`, `nano`,
-`patch`.
+It also has the CLI tools an agent or a GitHub runner usually has: `gh`, `chezmoi`, `uv`, `jq`,
+`yq`, `rg`, `fd`, `tree`, `wget`, `zip`/`unzip`/`xz`/`zstd`, `rsync`, `file`, `bc`, `gawk`,
+`sqlite3`, `dig`, `nc`, `ping`, `lsof`, `htop`, `strace`, `openssl`, `gpg`, `git-lfs`, `vim`,
+`nano`, `patch`.
+
+`uv` (and `uvx`) installs Python tools into the home volume, where they persist: `uv tool install`
+puts them in `~/.local/bin`, and a Python version they need other than the image's 3.14 in
+`~/.local/share/uv`.
 
 ## Validated workflows
 
