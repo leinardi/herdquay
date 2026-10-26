@@ -53,11 +53,13 @@ vulnerabilities:
       - usr/local/bin/golangci-lint
       - usr/local/bin/goreleaser
       - usr/local/bin/yq
+      - usr/local/bin/tofu
       - usr/libexec/docker/cli-plugins/docker-buildx
       - usr/libexec/docker/cli-plugins/docker-compose
     statement: >-
       Go standard library and golang.org/x/net the binary was built with (see CVE-2026-111943);
-      docker-buildx 0.38.1 and docker-compose 5.6.1 are Docker's latest Ubuntu packages.
+      tofu 1.13.2 is OpenTofu's latest release; docker-buildx 0.38.1 and docker-compose 5.6.1 are
+      Docker's latest Ubuntu packages.
     expired_at: 2026-11-23
   - id: CVE-2026-17106
     paths:
@@ -67,5 +69,177 @@ vulnerabilities:
   - id: CVE-2026-84445
     paths:
       - usr/local/bin/goreleaser
-    statement: google.golang.org/grpc in goreleaser, held at monmux's release workflow version.
+      - usr/local/bin/tofu
+    statement: >-
+      google.golang.org/grpc in goreleaser, held at monmux's release workflow version, and in tofu
+      1.13.2, OpenTofu's latest release.
+    expired_at: 2026-11-23
+  - id: CVE-2026-56864
+    paths: &tofu-x-mod-paths
+      - usr/local/bin/tofu
+    statement: golang.org/x/mod in tofu 1.13.2, OpenTofu's latest release.
+    expired_at: 2026-11-23
+  - id: CVE-2026-56865
+    paths: *tofu-x-mod-paths
+    statement: golang.org/x/mod in tofu 1.13.2, OpenTofu's latest release.
+    expired_at: 2026-11-23
+  - id: CVE-2026-25681
+    paths: &terraform-docs-paths
+      - usr/local/bin/terraform-docs
+    statement: >-
+      Go standard library and modules terraform-docs 0.22.0 was built with (Go 1.25.8). It is held
+      at the OpenTofu projects' version, whose module READMEs it writes; 0.24.0, the latest release,
+      has the same findings.
+    expired_at: 2026-11-23
+  - id: CVE-2026-27136
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-27145
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-32280
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-32281
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-32283
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-33811
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-33814
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-33818
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-39820
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-39821
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-39822
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-39828
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-39829
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-39830
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-39831
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-39832
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-39835
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-39836
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-42499
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-42504
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-42508
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-46595
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-46597
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-46600
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-56851
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-56852
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-56853
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-56854
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-56858
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-56859
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-56860
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-56862
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-78667
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-78669
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-84304
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-84445
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-97031
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: GHSA-hrxh-6v49-42gf
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
     expired_at: 2026-11-23
