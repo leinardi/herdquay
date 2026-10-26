@@ -434,6 +434,7 @@ doctor() {
 	check_tool jq jq --version
 	check_tool yq yq --version
 	check_tool chezmoi chezmoi --version
+	check_tool uv uv --version
 	check_tool rg rg --version
 
 	if ((network)); then

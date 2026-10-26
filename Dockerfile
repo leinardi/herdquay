@@ -84,6 +84,9 @@ ARG DROAST_VERSION=1.7.0
 ARG DROAST_SHA256=cadb963a040ba2e68641af764f794e5d4fb3371bb9b92255fa5027060b08ea6e
 ARG SHELLCHECK_VERSION=0.11.0
 ARG SHELLCHECK_SHA256=8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+# uv, for Python tools and the Pythons they need, installed into the home volume (`uv tool install`).
+ARG UV_VERSION=0.13.5
+ARG UV_SHA256=f68d291c75783122dad58ab77def0e13f3233f358731db5d6d7e8715603b928f
 ARG YQ_VERSION=4.54.1
 ARG YQ_SHA256=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
 RUN fetch() { curl -fsSL -o "$1" "$2" && echo "$3  $1" | sha256sum --check --strict -; } \
@@ -117,6 +120,11 @@ RUN fetch() { curl -fsSL -o "$1" "$2" && echo "$3  $1" | sha256sum --check --str
 	&& fetch /usr/local/bin/chezmoi \
 		"https://github.com/twpayne/chezmoi/releases/download/v${CHEZMOI_VERSION}/chezmoi-linux-amd64" \
 		"${CHEZMOI_SHA256}" \
+	&& fetch /tmp/uv.tar.gz \
+		"https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz" \
+		"${UV_SHA256}" \
+	&& tar -xzf /tmp/uv.tar.gz -C /tmp \
+	&& install -m 0755 /tmp/uv-x86_64-unknown-linux-gnu/uv /tmp/uv-x86_64-unknown-linux-gnu/uvx /usr/local/bin/ \
 	&& chmod 0755 /usr/local/bin/droast /usr/local/bin/yq /usr/local/bin/chezmoi \
 	&& rm -rf /tmp/*
 
@@ -238,6 +246,8 @@ COPY --from=fetch \
 	/usr/local/bin/goreleaser \
 	/usr/local/bin/droast \
 	/usr/local/bin/shellcheck \
+	/usr/local/bin/uv \
+	/usr/local/bin/uvx \
 	/usr/local/bin/yq \
 	/usr/local/bin/
 

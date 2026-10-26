@@ -73,6 +73,7 @@ echo "Release binaries"
 check_github herdr herdrdev/herdr HERDR_VERSION herdr-linux-x86_64
 check_github chezmoi twpayne/chezmoi CHEZMOI_VERSION chezmoi-linux-amd64
 check_github gh cli/cli GH_VERSION 'gh_{v}_linux_amd64.tar.gz'
+check_github uv astral-sh/uv UV_VERSION uv-x86_64-unknown-linux-gnu.tar.gz
 check_github golangci-lint golangci/golangci-lint GOLANGCI_LINT_VERSION 'golangci-lint-{v}-linux-amd64.tar.gz' \
 	"matches the projects' pre-commit rev: bump with them"
 check_github goreleaser goreleaser/goreleaser GORELEASER_VERSION goreleaser_Linux_x86_64.tar.gz \
