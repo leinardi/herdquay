@@ -3,7 +3,7 @@
 A persistent, remotely accessible AI coding environment for a homelab: one container that runs a
 [Herdr](https://herdr.dev) server, [Claude Code](https://code.claude.com),
 [opencode](https://opencode.ai), an unprivileged SSH server, Git, the GitHub CLI and the
-toolchains needed to work on the owner's projects.
+toolchains of typical Go, Node, Python and Rust projects.
 
 - **Desktop (Linux, macOS):** the local Herdr client attaches to the container's Herdr server over
   SSH, with the full interactive Claude Code terminal UI.
@@ -17,7 +17,7 @@ toolchains needed to work on the owner's projects.
 
 The image works and is tested locally: desktop attach over SSH, Remote Control from the phone,
 sessions that survive a client disconnect and resume after a container restart with no client
-attached, and the toolchains of the owner's projects. Images are published to
+attached, and the toolchains of typical Go, Node, Python and Rust projects. Images are published to
 `ghcr.io/leinardi/herdquay` by the [release workflow](docs/release.md)
 ([deployment](docs/deployment.md) lists what a deployment must provide).
 
@@ -37,8 +37,8 @@ GitHub, set up a GitHub App ([GitHub App](docs/operations.md#github-app)).
 - [Operations](docs/operations.md): interface, the GitHub App, commit signing, first connection,
   restarts, `herdquay doctor`, upgrades, recovery.
 - [Security model](docs/security.md): boundaries, secrets, accepted risks, supply chain.
-- [Development environment](docs/dev-environment.md): the toolchains, the projects they were
-  chosen from, what does not run inside.
+- [Development environment](docs/dev-environment.md): the toolchains, what does not run
+  inside.
 - [Updating](docs/updating.md): every pin, how to bump it.
 - [Release](docs/release.md): versioning, the published image, verifying it, recovering a failed
   release.

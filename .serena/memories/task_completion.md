@@ -1,7 +1,7 @@
 # Definition of done
 
 Always: `make check`. Then by what changed (AGENTS.md validation matrix):
-- `Dockerfile`, `droast.toml`, `container/**`: `make image-build image-test`; toolchain change also `make compose-up projects-test`; keep `docs/updating.md` and `docs/dev-environment.md` in step.
+- `Dockerfile`, `droast.toml`, `container/**`: `make image-build image-test`; keep `docs/updating.md` and `docs/dev-environment.md` in step.
 - `tests/**`, `scripts/local-secrets.sh`: `make image-test`.
 - `.github/workflows/**`: `pre-commit run actionlint --all-files`; reason through every trigger.
 - `Makefile`/local `.mk`: `make check` + `make help`.

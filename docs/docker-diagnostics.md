@@ -174,7 +174,7 @@ the only limits that take effect (below).
   ([Published ports](#published-ports)).
 - **Only the workspace can be bind-mounted**: a source outside `/home/herdquay/workspace` is an
   empty directory of the daemon's ([Bind mounts and temp files](#bind-mounts-and-temp-files)).
-- **No privileged containers**, so no Docker-in-Docker inside it (runhold's DinD tests,
+- **No privileged containers**, so no Docker-in-Docker inside it (DinD tests,
   `services: docker:dind`), no BPF, no host namespaces.
 - **No kernel modules**: a container can load none. What the tests need (for example `ifb`,
   `sch_netem`) must be loaded on the host.
