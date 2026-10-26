@@ -24,10 +24,10 @@ modules, `npm ci`, pre-commit hook environments, Playwright browsers), cached in
 | Playwright 1.64.0: Chromium, Firefox, WebKit | image: the three browsers' system libraries; browsers per project in `~/.cache/ms-playwright` |
 | govulncheck, sqlc, svu, actionlint, checkmake, dclint | per project: `go run …@version`, pre-commit hook environments |
 | Docker CLI, buildx, Compose | image, client; a daemon only as the opt-in rootless one ([docker-diagnostics.md](docker-diagnostics.md)) |
-| OpenTofu 1.12.6 (`tofu fmt`, `tofu validate`) | image |
-| TFLint 0.64.0 | image; its plugins per user, `tflint --init` into `~/.tflint.d` |
+| OpenTofu 1.13.2 (`tofu fmt`, `tofu validate`) | image |
+| TFLint 0.65.0 | image; its plugins per user, `tflint --init` into `~/.tflint.d` |
 | terraform-docs 0.22.0 | image |
-| Trivy 0.75.0 | image; its vulnerability database per user, in `~/.cache/trivy` |
+| Trivy 0.76.1 | image; its vulnerability database per user, in `~/.cache/trivy` |
 | GNOME extensions: `gjs`, `glib-compile-schemas`, gettext (`xgettext`, `msgfmt`, `msgmerge`) | image: `gjs`, `libglib2.0-bin`, `gettext`; no GNOME Shell, so no `gnome-extensions pack` and no interactive Shell testing |
 
 No toolchain manager: one Go and one Node line are enough today, and a manager would be one more
