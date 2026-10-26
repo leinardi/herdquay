@@ -14,9 +14,12 @@ the current Docker context):
 | a configured daemon that does not answer | FAIL |
 | anything, while `/var/run/docker.sock` exists | FAIL |
 
-It also warns when the shell it runs in has a `DOCKER_HOST`, `DOCKER_TLS_VERIFY` or
-`DOCKER_CERT_PATH` other than the container's (see
-[How sessions get the variables](#how-sessions-get-the-variables)).
+With a daemon, it also checks that `HERDQUAY_DOCKER_HOSTNAME` is set and resolves (warns
+otherwise), and warns about it or `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` set without a daemon. It
+warns when the shell it runs in has one of the forwarded variables other than the Herdr panes'
+(see [How sessions get the variables](#how-sessions-get-the-variables)), fails when the temp dir
+does not run binaries, and warns when `HERDQUAY_WORKSPACE_TMP=1` was refused or the session's
+`TMPDIR` is not the workspace temp dir.
 
 ## 1. Read-only diagnostics (designed, not wired)
 
@@ -82,17 +85,54 @@ and without per-container cgroups (below) one could starve the other.
 - The daemon's rootless user is UID 568 too, so files that containers write into bind mounts come
   back owned by 568. The upstream image's rootless user is 1000: with it, those files are not
   HerdQuay's.
+- `HERDQUAY_DOCKER_HOSTNAME`: the daemon's name on the network it shares with HerdQuay, where
+  published ports answer ([Published ports](#published-ports)).
+- `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`: the socket's path **inside the daemon's container**,
+  which Testcontainers' Ryuk bind-mounts (for swarm-rootless-docker,
+  `/home/rootless/socket/docker.sock`). HerdQuay's own path to the socket exists only in HerdQuay.
+- Optionally `HERDQUAY_WORKSPACE_TMP=1` ([Bind mounts and temp files](#bind-mounts-and-temp-files)).
+
+### Published ports
+
+`docker run -p 8080:80` publishes the port in the daemon's container: it answers at
+`<HERDQUAY_DOCKER_HOSTNAME>:8080`, not at HerdQuay's `localhost`. Project configurations, test URLs
+(Playwright `baseURL`s, `curl` checks) and agents should use `${HERDQUAY_DOCKER_HOSTNAME:-localhost}`,
+which keeps working with a local daemon. Testcontainers needs nothing: the entrypoint sets
+`TESTCONTAINERS_HOST_OVERRIDE` to `HERDQUAY_DOCKER_HOSTNAME` unless the deployment sets it. Nothing
+forwards ports to `localhost`.
+
+### Bind mounts and temp files
+
+The daemon sees HerdQuay's workspace and nothing else of HerdQuay: `docker run -v /tmp/x:/w`
+mounts an empty directory of the daemon's, and what the container writes there never shows up in
+HerdQuay. Bind-mount sources must live under `/home/herdquay/workspace`.
+
+Tools and agents that create a temp directory and mount it into a container hit this.
+`HERDQUAY_WORKSPACE_TMP=1` moves `TMPDIR`, and Claude Code's temp dir (`CLAUDE_CODE_TMPDIR`), to
+`~/workspace/.tmp`, for Herdr panes and SSH sessions alike:
+
+- Created 0700, and **emptied at every start**: nothing kept there survives a restart.
+- Refused, with a warning in the log and in `herdquay doctor`, when the workspace or `.tmp` is a
+  symlink (anywhere on the path) or not a directory HerdQuay owns: nothing is then created or
+  deleted, and `TMPDIR` stays `/tmp`.
+- Files a container wrote as a non-root user belong to one of the daemon's subordinate UIDs, and
+  the start cannot delete them (a warning). Delete them from a container as root
+  (`docker run --rm -v ~/workspace/.tmp:/t alpine find /t -mindepth 1 -delete`).
+- The workspace volume must allow `exec` ([deployment.md](deployment.md#service)), and `.tmp` can
+  stay out of its snapshots and backups where the storage allows it.
 
 ### How sessions get the variables
 
-Herdr panes and everything else the entrypoint starts inherit the container's environment. SSH
-sessions do not: sshd gives them an environment of its own. So at every start the entrypoint
-writes the container's `DOCKER_HOST`, `DOCKER_TLS_VERIFY` and `DOCKER_CERT_PATH`, those that are
-set, to `~/.ssh/environment`, and removes the file when none is. sshd reads it for every session
-(an interactive login, `ssh host cmd`, Herdr's own SSH commands) through
-`PermitUserEnvironment DOCKER_HOST,DOCKER_TLS_VERIFY,DOCKER_CERT_PATH`:
+Herdr panes and everything else the entrypoint starts inherit its environment. SSH sessions do
+not: sshd gives them an environment of its own. So at every start the entrypoint writes
+`DOCKER_HOST`, `DOCKER_TLS_VERIFY`, `DOCKER_CERT_PATH`, `HERDQUAY_DOCKER_HOSTNAME`,
+`TESTCONTAINERS_HOST_OVERRIDE`, `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`, `TMPDIR` and
+`CLAUDE_CODE_TMPDIR`, those that are set (by the deployment, or by the entrypoint itself for the
+Testcontainers host and the temp dir), to `~/.ssh/environment`, and removes the file when none is.
+sshd reads it for every session (an interactive login, `ssh host cmd`, Herdr's own SSH commands)
+through `PermitUserEnvironment`, which lists exactly those names:
 
-- Only those three names: sshd ignores any other line in the file, `PATH` and `LD_PRELOAD`
+- Only those names: sshd ignores any other line in the file, `PATH` and `LD_PRELOAD`
   included, and nothing else of the container's environment reaches a session. A client cannot
   send them either (`AcceptEnv` is unchanged).
 - The values are taken literally, never through a shell. A value with a line break is ignored,
@@ -100,7 +140,7 @@ set, to `~/.ssh/environment`, and removes the file when none is. sshd reads it f
 - Unset on the container means unset in sessions, never a default. A change takes a restart of
   the container, and then a new SSH session.
 
-`herdquay doctor` compares its own shell's three variables with the container's (PID 1's), and
+`herdquay doctor` compares its own shell's values of those names with the Herdr server's, and
 warns about each that differs, as when a session exported its own or `~/.ssh/environment` was
 edited by hand: that session's `docker` then reaches another daemon than the panes do.
 
@@ -130,7 +170,10 @@ the only limits that take effect (below).
   daemon's usage (`memory.peak` included). Tests that measure a container's own cgroup cannot run
   here.
 - **Published ports live in the daemon's container**: `docker run -p 8080:80` answers at the
-  daemon's address on a network it shares with HerdQuay, not at HerdQuay's `localhost`.
+  daemon's address on a network it shares with HerdQuay, not at HerdQuay's `localhost`
+  ([Published ports](#published-ports)).
+- **Only the workspace can be bind-mounted**: a source outside `/home/herdquay/workspace` is an
+  empty directory of the daemon's ([Bind mounts and temp files](#bind-mounts-and-temp-files)).
 - **No privileged containers**, so no Docker-in-Docker inside it (runhold's DinD tests,
   `services: docker:dind`), no BPF, no host namespaces.
 - **No kernel modules**: a container can load none. What the tests need (for example `ifb`,

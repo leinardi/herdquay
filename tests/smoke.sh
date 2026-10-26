@@ -24,7 +24,8 @@
 #
 # Smoke test of a built image: SSH as the unprivileged user, the doctor, the pinned tools, the
 # GitHub App credentials against a stub API (tests/github-stub.py, on the container's loopback),
-# the doctor's Docker check against stub daemons (tests/docker-stub.py),
+# the doctor's Docker check against stub daemons (tests/docker-stub.py), the session variables and
+# the opt-in workspace temp dir,
 # the commit identity, agent forwarding, secret permissions, and persistence of the host key and
 # home across container recreation, and GPG commit signing (only for the custom identity, renewed
 # keys picked up). Needs no real credentials.
@@ -111,6 +112,11 @@ docker_doctor() {
 	in_ssh "${TEST_ID}" "DOCKER_HOST=$1 herdquay doctor || true" | sed -n '/^Docker$/{n;p;q}'
 }
 
+# docker_section <environment>: the doctor's whole Docker section, run with those assignments.
+docker_section() {
+	in_ssh "${TEST_ID}" "$1 herdquay doctor || true" | sed -n '/^Docker$/,/^$/p'
+}
+
 grep -q '^  ok    no Docker daemon configured' "${SCRATCH}/doctor.txt" ||
 	die "herdquay doctor does not report that no Docker daemon is configured"
 docker exec -d "${TEST_ID}" python3 "${STUB_DIR}/docker-stub.py" 18082 rootless
@@ -130,12 +136,50 @@ grep -q '^  FAIL  /var/run/docker.sock exists' <<<"$(docker run --rm --entrypoin
 	die "herdquay doctor does not fail on /var/run/docker.sock"
 pass "doctor Docker check: none by default, rootless accepted, rootful, unreachable and the socket fail"
 
-# session_env <name> <in_ssh|in_login|in_tty>: the Docker variables a session of that kind sees,
-# one `HQ <name><<value>>` line each; DOCKER_CONFIG, not on the list, is never forwarded.
+rootless=DOCKER_HOST=tcp://127.0.0.1:18082
+grep -q "^  warn  HERDQUAY_DOCKER_HOSTNAME is not set: published ports" <<<"$(docker_section "${rootless}")" ||
+	die "herdquay doctor does not warn about a daemon without HERDQUAY_DOCKER_HOSTNAME"
+out="$(docker_section "${rootless} HERDQUAY_DOCKER_HOSTNAME=localhost TESTCONTAINERS_HOST_OVERRIDE=localhost TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/d/docker.sock")"
+{ grep -q '^  ok    published ports answer at localhost ' <<<"${out}" &&
+	grep -q '^  ok    Testcontainers mounts the daemon.s socket from /d/docker.sock' <<<"${out}"; } ||
+	die "herdquay doctor does not accept the daemon's hostname and socket path: ${out}"
+grep -q '^  warn  HERDQUAY_DOCKER_HOSTNAME nonexistent.invalid does not resolve' \
+	<<<"$(docker_section "${rootless} HERDQUAY_DOCKER_HOSTNAME=nonexistent.invalid")" ||
+	die "herdquay doctor does not warn about an unresolvable HERDQUAY_DOCKER_HOSTNAME"
+out="$(docker_section "HERDQUAY_DOCKER_HOSTNAME=localhost TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/d/docker.sock")"
+{ grep -q '^  warn  HERDQUAY_DOCKER_HOSTNAME is set (localhost) but no Docker daemon' <<<"${out}" &&
+	grep -q '^  warn  TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE is set (/d/docker.sock) but no Docker daemon' <<<"${out}"; } ||
+	die "herdquay doctor does not warn about the daemon's variables without a daemon: ${out}"
+pass "doctor: the daemon's hostname resolves, socket path reported, both flagged without a daemon"
+
+grep -q '^  ok    the temp dir /tmp runs binaries' "${SCRATCH}/doctor.txt" ||
+	die "herdquay doctor does not report /tmp running binaries"
+grep -q '^  FAIL  the temp dir /dev/shm does not run binaries' <<<"$(in_ssh "${TEST_ID}" 'TMPDIR=/dev/shm herdquay doctor || true')" ||
+	die "herdquay doctor does not fail on a noexec temp dir"
+in_ssh "${TEST_ID}" 'test ! -e ~/workspace/.tmp && test ! -e ~/.local/state/herdquay/workspace-tmp' ||
+	die "the workspace temp dir exists without HERDQUAY_WORKSPACE_TMP=1"
+grep -q 'workspace temp dir' "${SCRATCH}/doctor.txt" && die "herdquay doctor reports a workspace temp dir that is off"
+pass "temp dir: /tmp runs binaries, a noexec one fails; no workspace temp dir without the opt-in"
+
+# session_env <name> <in_ssh|in_login|in_tty>: the forwarded variables a session of that kind
+# sees, one `HQ <name><<value>>` line each; DOCKER_CONFIG, not on the list, is never forwarded.
+SESSION_ENV_LIST='DOCKER_HOST DOCKER_TLS_VERIFY DOCKER_CERT_PATH HERDQUAY_DOCKER_HOSTNAME TESTCONTAINERS_HOST_OVERRIDE TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE TMPDIR CLAUDE_CODE_TMPDIR DOCKER_CONFIG'
 # shellcheck disable=SC2016 # expanded by the session's shell
-SESSION_ENV_PROBE='for n in DOCKER_HOST DOCKER_TLS_VERIFY DOCKER_CERT_PATH DOCKER_CONFIG; do printf "HQ %s<%s>\n" "$n" "$(printenv "$n")"; done'
+SESSION_ENV_PROBE='for n in '"${SESSION_ENV_LIST}"'; do printf "HQ %s<%s>\n" "$n" "$(printenv "$n")"; done'
 session_env() {
-	"$2" "$1" "${SESSION_ENV_PROBE}" | grep '^HQ DOCKER_'
+	"$2" "$1" "${SESSION_ENV_PROBE}" | grep '^HQ [A-Z_]*<'
+}
+
+# env_lines <NAME=value...>: the session_env lines for those values, every other name unset.
+env_lines() {
+	local name assignment value
+	for name in ${SESSION_ENV_LIST}; do
+		value=""
+		for assignment in "$@"; do
+			[[ ${assignment%%=*} == "${name}" ]] && value="${assignment#*=}"
+		done
+		printf 'HQ %s<%s>\n' "${name}" "${value}"
+	done
 }
 
 # assert_session_env <name> <expected lines>: the same view from `ssh host cmd`, a login shell and
@@ -150,10 +194,7 @@ assert_session_env() {
 	done
 }
 
-NO_SESSION_ENV='HQ DOCKER_HOST<>
-HQ DOCKER_TLS_VERIFY<>
-HQ DOCKER_CERT_PATH<>
-HQ DOCKER_CONFIG<>'
+NO_SESSION_ENV="$(env_lines)"
 assert_session_env "${TEST_ID}" "${NO_SESSION_ENV}"
 in_ssh "${TEST_ID}" 'test ! -e ~/.ssh/environment' || die ".ssh/environment exists without a Docker variable"
 pass "no Docker variable on the container: none in SSH sessions"
@@ -425,23 +466,25 @@ pass "renewed signing key (same fingerprint, new expiry) used for the next commi
 EVIL_HOST='tcp://127.0.0.1:1;$(touch /tmp/pwned) `touch /tmp/pwned` "q"'
 CERT_PATH='/run/secrets/docker tls'
 HERDQUAY_CLAUDE_INSTALL=0 HERDQUAY_RUST_INSTALL=0 start_container "${TEST_ID}-env" "${TEST_ID}-env-home" \
-	-e DOCKER_HOST="${EVIL_HOST}" -e DOCKER_TLS_VERIFY=1 -e DOCKER_CERT_PATH="${CERT_PATH}" -e DOCKER_CONFIG=/tmp/cfg
+	-e DOCKER_HOST="${EVIL_HOST}" -e DOCKER_TLS_VERIFY=1 -e DOCKER_CERT_PATH="${CERT_PATH}" -e DOCKER_CONFIG=/tmp/cfg \
+	-e HERDQUAY_DOCKER_HOSTNAME=docker-daemon -e TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/home/rootless/socket/docker.sock
 wait_healthy "${TEST_ID}-env"
-expected="HQ DOCKER_HOST<${EVIL_HOST}>
-HQ DOCKER_TLS_VERIFY<1>
-HQ DOCKER_CERT_PATH<${CERT_PATH}>
-HQ DOCKER_CONFIG<>"
+expected="$(env_lines "DOCKER_HOST=${EVIL_HOST}" DOCKER_TLS_VERIFY=1 "DOCKER_CERT_PATH=${CERT_PATH}" \
+	HERDQUAY_DOCKER_HOSTNAME=docker-daemon TESTCONTAINERS_HOST_OVERRIDE=docker-daemon \
+	TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/home/rootless/socket/docker.sock)"
 assert_session_env "${TEST_ID}-env" "${expected}"
 docker exec "${TEST_ID}-env" test ! -e /tmp/pwned || die "a Docker variable's value was run by a shell"
 [[ $(docker exec "${TEST_ID}-env" bash -c 'tr "\0" "\n" <"/proc/$(pgrep -xo herdr)/environ"' |
 	grep -E '^DOCKER_(HOST|TLS_VERIFY|CERT_PATH)=' | sort) == "$(printf '%s\n' "DOCKER_CERT_PATH=${CERT_PATH}" \
 	"DOCKER_HOST=${EVIL_HOST}" DOCKER_TLS_VERIFY=1)" ]] || die "the Herdr server does not have the container's Docker variables"
-in_ssh "${TEST_ID}-env" 'herdquay doctor || true' | grep -q ' differs from the container' &&
-	die "herdquay doctor reports a mismatch where the session matches the container"
-grep -q '^  warn  DOCKER_HOST differs from the container.s: session tcp://other, container ' \
+docker exec "${TEST_ID}-env" bash -c 'tr "\0" "\n" <"/proc/$(pgrep -xo herdr)/environ"' |
+	grep -qx TESTCONTAINERS_HOST_OVERRIDE=docker-daemon || die "the Herdr server does not have TESTCONTAINERS_HOST_OVERRIDE"
+in_ssh "${TEST_ID}-env" 'herdquay doctor || true' | grep -q ' differs from the Herdr panes' &&
+	die "herdquay doctor reports a mismatch where the session matches the Herdr panes"
+grep -q '^  warn  DOCKER_HOST differs from the Herdr panes.: session tcp://other, panes ' \
 	<<<"$(in_ssh "${TEST_ID}-env" 'DOCKER_HOST=tcp://other herdquay doctor || true')" ||
-	die "herdquay doctor does not report a session DOCKER_HOST that differs from the container's"
-pass "Docker variables on the container: verbatim in every SSH session and Herdr, the rest not; doctor compares"
+	die "herdquay doctor does not report a session DOCKER_HOST that differs from the Herdr panes'"
+pass "Docker variables on the container: verbatim in every SSH session and Herdr, Testcontainers' host derived, the rest not; doctor compares"
 
 # sshd takes only the allow-listed names from the file, even when it is edited by hand.
 in_ssh "${TEST_ID}-env" 'printf "FOO=bar\nPATH=/evil\n" >>~/.ssh/environment'
@@ -466,5 +509,70 @@ wait_log "${TEST_ID}-env3" 'warning: DOCKER_HOST contains a line break' 5
 assert_session_env "${TEST_ID}-env3" "${NO_SESSION_ENV}"
 docker rm -f "${TEST_ID}-env3" >/dev/null
 pass "removed or line-broken Docker variables: unset in SSH sessions"
+
+# An explicit TESTCONTAINERS_HOST_OVERRIDE wins over the one derived from HERDQUAY_DOCKER_HOSTNAME.
+HERDQUAY_CLAUDE_INSTALL=0 HERDQUAY_RUST_INSTALL=0 start_container "${TEST_ID}-env4" "${TEST_ID}-env-home" \
+	-e HERDQUAY_DOCKER_HOSTNAME=docker-daemon -e TESTCONTAINERS_HOST_OVERRIDE=other
+wait_healthy "${TEST_ID}-env4"
+[[ $(session_env "${TEST_ID}-env4" in_ssh) == "$(env_lines HERDQUAY_DOCKER_HOSTNAME=docker-daemon TESTCONTAINERS_HOST_OVERRIDE=other)" ]] ||
+	die "an explicit TESTCONTAINERS_HOST_OVERRIDE was replaced"
+docker rm -f "${TEST_ID}-env4" >/dev/null
+pass "an explicit TESTCONTAINERS_HOST_OVERRIDE is kept"
+
+# HERDQUAY_WORKSPACE_TMP=1: TMPDIR in ~/workspace/.tmp for sessions and Herdr, emptied at every
+# start, and refused, untouched, behind a symlink anywhere on its path.
+TMP_HOME="${TEST_ID}-tmp-home"
+WS_TMP=/home/herdquay/workspace/.tmp
+REFUSED='^  warn  HERDQUAY_WORKSPACE_TMP=1 but the workspace temp dir was refused: '
+# start_tmp <name>: a container on TMP_HOME with the opt-in.
+start_tmp() {
+	HERDQUAY_CLAUDE_INSTALL=0 HERDQUAY_RUST_INSTALL=0 start_container "$1" "${TMP_HOME}" -e HERDQUAY_WORKSPACE_TMP=1
+	wait_healthy "$1"
+}
+# on_tmp_home <script>: the script on TMP_HOME, with no container running on it.
+on_tmp_home() {
+	docker run --rm --entrypoint bash -v "${TMP_HOME}:/home/herdquay" "${IMAGE}" -c "$1"
+}
+
+start_tmp "${TEST_ID}-tmp"
+assert_session_env "${TEST_ID}-tmp" "$(env_lines TMPDIR=${WS_TMP} CLAUDE_CODE_TMPDIR=${WS_TMP})"
+[[ $(docker exec "${TEST_ID}-tmp" bash -c 'tr "\0" "\n" <"/proc/$(pgrep -xo herdr)/environ"' | grep -E '^(TMPDIR|CLAUDE_CODE_TMPDIR)=' | sort) == \
+	"$(printf '%s\n' "CLAUDE_CODE_TMPDIR=${WS_TMP}" "TMPDIR=${WS_TMP}")" ]] || die "the Herdr server does not have the workspace temp dir"
+[[ $(in_ssh "${TEST_ID}-tmp" "stat -c %a ${WS_TMP}") == 700 ]] || die "the workspace temp dir is not 0700"
+grep -q "^  ok    TMPDIR is the workspace temp dir ${WS_TMP}, emptied" <<<"$(in_ssh "${TEST_ID}-tmp" 'herdquay doctor || true')" ||
+	die "herdquay doctor does not report the workspace temp dir"
+grep -q "^  ok    the temp dir ${WS_TMP} runs binaries" <<<"$(in_ssh "${TEST_ID}-tmp" 'herdquay doctor || true')" ||
+	die "herdquay doctor does not check that the workspace temp dir runs binaries"
+grep -q '^  warn  TMPDIR is /tmp, not the workspace temp dir' <<<"$(in_ssh "${TEST_ID}-tmp" 'TMPDIR=/tmp herdquay doctor || true')" ||
+	die "herdquay doctor does not warn about a session TMPDIR other than the workspace temp dir"
+in_ssh "${TEST_ID}-tmp" "mkdir -p ${WS_TMP}/d/e && touch ${WS_TMP}/planted ${WS_TMP}/.hidden ${WS_TMP}/d/e/f"
+docker restart "${TEST_ID}-tmp" >/dev/null
+wait_healthy "${TEST_ID}-tmp"
+[[ -z $(in_ssh "${TEST_ID}-tmp" "ls -A ${WS_TMP}") ]] || die "the workspace temp dir was not emptied at restart"
+[[ $(session_env "${TEST_ID}-tmp" in_ssh) == "$(env_lines TMPDIR=${WS_TMP} CLAUDE_CODE_TMPDIR=${WS_TMP})" ]] ||
+	die "the workspace temp dir was not reused at restart"
+docker rm -f "${TEST_ID}-tmp" >/dev/null
+pass "HERDQUAY_WORKSPACE_TMP=1: TMPDIR in ${WS_TMP} (0700) for SSH and Herdr, emptied at every start; doctor checks"
+
+# assert_tmp_refused <name> <log reason>: TMPDIR unchanged, the refusal logged and in the doctor.
+assert_tmp_refused() {
+	wait_log "$1" "warning: workspace temp dir refused: $2" 5
+	[[ $(session_env "$1" in_ssh) == "${NO_SESSION_ENV}" ]] || die "$1: a refused workspace temp dir reached the sessions"
+	grep -q "${REFUSED}" <<<"$(in_ssh "$1" 'herdquay doctor || true')" ||
+		die "$1: herdquay doctor over SSH does not warn about the refused workspace temp dir"
+}
+
+on_tmp_home 'rm -rf ~/workspace/.tmp && mkdir ~/keep && touch ~/keep/file && ln -s ~/keep ~/workspace/.tmp'
+start_tmp "${TEST_ID}-tmp2"
+assert_tmp_refused "${TEST_ID}-tmp2" "${WS_TMP} is not a directory"
+in_ssh "${TEST_ID}-tmp2" "test -e ~/keep/file && test -L ${WS_TMP}" || die "a symlinked .tmp was followed"
+docker rm -f "${TEST_ID}-tmp2" >/dev/null
+
+on_tmp_home 'rm -rf ~/workspace ~/keep && mkdir -p ~/outside/.tmp && touch ~/outside/.tmp/keepme && ln -s ~/outside ~/workspace'
+start_tmp "${TEST_ID}-tmp3"
+assert_tmp_refused "${TEST_ID}-tmp3" "/home/herdquay/workspace is not a real directory"
+in_ssh "${TEST_ID}-tmp3" 'test -e ~/outside/.tmp/keepme' || die "the workspace temp dir was emptied through a symlinked workspace"
+docker rm -f "${TEST_ID}-tmp3" >/dev/null
+pass "HERDQUAY_WORKSPACE_TMP=1 behind a symlinked .tmp or workspace: refused, nothing deleted, doctor warns over SSH"
 
 echo "smoke: all checks passed"

@@ -102,7 +102,7 @@ check_secret() {
 # The Docker daemon the CLI reaches, from DOCKER_HOST or the current context: none by default, and
 # when one is configured, only a dedicated rootless daemon, never the host's (docker-diagnostics.md).
 check_docker() {
-	local endpoint info
+	local endpoint info daemon=0
 	endpoint="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null)" ||
 		endpoint="${DOCKER_HOST:-}"
 	if [[ -e /var/run/docker.sock ]]; then
@@ -113,31 +113,95 @@ check_docker() {
 		ok "no Docker daemon configured (DOCKER_HOST unset)"
 	elif ! info="$(timeout 10 docker info --format '{{.ServerVersion}} {{json .SecurityOptions}}' 2>/dev/null)"; then
 		fail "the Docker daemon at ${endpoint} is unreachable"
+		daemon=1
 	elif [[ ${info} != *'"name=rootless"'* ]]; then
 		fail "the Docker daemon at ${endpoint} is not rootless: HerdQuay may only reach a dedicated rootless daemon"
+		daemon=1
 	else
 		ok "dedicated rootless Docker daemon at ${endpoint} (Docker ${info%% *})"
+		daemon=1
+	fi
+	check_docker_hostname "${daemon}"
+}
+
+# check_docker_hostname <daemon-configured>: published ports answer at the daemon's name, which the
+# deployment sets as HERDQUAY_DOCKER_HOSTNAME, and Ryuk mounts the socket by the daemon's path.
+check_docker_hostname() {
+	local daemon="$1" name="${HERDQUAY_DOCKER_HOSTNAME:-}" socket="${TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE:-}"
+	if ((daemon)); then
+		if [[ -z ${name} ]]; then
+			warn "HERDQUAY_DOCKER_HOSTNAME is not set: published ports answer at the daemon's address, not at localhost (docker-diagnostics.md)"
+		elif getent hosts "${name}" >/dev/null 2>&1; then
+			ok "published ports answer at ${name} (HERDQUAY_DOCKER_HOSTNAME; Testcontainers: ${TESTCONTAINERS_HOST_OVERRIDE:-unset})"
+		else
+			warn "HERDQUAY_DOCKER_HOSTNAME ${name} does not resolve"
+		fi
+		if [[ -n ${socket} ]]; then
+			ok "Testcontainers mounts the daemon's socket from ${socket} (TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE)"
+		fi
+	else
+		[[ -z ${name} ]] || warn "HERDQUAY_DOCKER_HOSTNAME is set (${name}) but no Docker daemon is configured"
+		[[ -z ${socket} ]] || warn "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE is set (${socket}) but no Docker daemon is configured"
 	fi
 }
 
-# SSH sessions get the container's Docker variables through ~/.ssh/environment (herdquay-entrypoint);
-# Herdr panes inherit them. Compares this shell's with the container's, PID 1's: a session that
-# exported its own, or an edited ~/.ssh/environment, reaches another daemon than the panes do.
+# The variables SSH sessions get through ~/.ssh/environment (herdquay-entrypoint, SESSION_ENV_NAMES);
+# Herdr panes inherit them from the Herdr server. Compares this shell's with the server's (PID 1's
+# when it is not running, which lacks those the entrypoint sets itself): a session that exported
+# its own, or an edited ~/.ssh/environment, reaches another daemon or temp dir than the panes do.
+SESSION_ENV_NAMES=(DOCKER_HOST DOCKER_TLS_VERIFY DOCKER_CERT_PATH HERDQUAY_DOCKER_HOSTNAME
+	TESTCONTAINERS_HOST_OVERRIDE TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE TMPDIR CLAUDE_CODE_TMPDIR)
 check_session_env() {
-	local entry name mine theirs
-	local -A container=()
-	[[ -r /proc/1/environ ]] || return 0
+	local entry name mine theirs pid
+	local -A panes=() wanted=()
+	pid="$(pgrep -u "$(id -u)" -xo herdr 2>/dev/null)" || pid=1
+	[[ -r /proc/${pid}/environ ]] || return 0
+	for name in "${SESSION_ENV_NAMES[@]}"; do wanted["${name}"]=1; done
 	while IFS= read -r -d '' entry; do
-		case "${entry%%=*}" in
-		DOCKER_HOST | DOCKER_TLS_VERIFY | DOCKER_CERT_PATH) container["${entry%%=*}"]="${entry#*=}" ;;
-		esac
-	done 2>/dev/null </proc/1/environ || return 0
-	for name in DOCKER_HOST DOCKER_TLS_VERIFY DOCKER_CERT_PATH; do
+		if [[ -n ${wanted[${entry%%=*}]:-} ]]; then panes["${entry%%=*}"]="${entry#*=}"; fi
+	done 2>/dev/null <"/proc/${pid}/environ" || return 0
+	for name in "${SESSION_ENV_NAMES[@]}"; do
 		mine="${!name:-}"
-		theirs="${container[${name}]:-}"
+		theirs="${panes[${name}]:-}"
 		[[ ${mine} == "${theirs}" ]] && continue
-		warn "${name} differs from the container's: session ${mine:-unset}, container ${theirs:-unset} (SSH sessions get it from ~/.ssh/environment, rewritten at every start)"
+		warn "${name} differs from the Herdr panes': session ${mine:-unset}, panes ${theirs:-unset} (SSH sessions get it from ~/.ssh/environment, rewritten at every start)"
 	done
+}
+
+# The temp dir runs binaries (Go tests, Playwright, pre-commit need it), and the workspace temp dir
+# is what the entrypoint recorded: HERDQUAY_WORKSPACE_TMP is read from its state file, which says
+# the same in every kind of session, not from this shell.
+check_tmp() {
+	local tmp="${TMPDIR:-/tmp}" probe state="${HOME}/.local/state/herdquay/workspace-tmp" line dir
+	if probe="$(mktemp "${tmp}/herdquay-exec.XXXXXX" 2>/dev/null)"; then
+		printf '#!/bin/sh\nexit 0\n' >"${probe}"
+		chmod 0700 "${probe}"
+		if "${probe}" 2>/dev/null; then
+			ok "the temp dir ${tmp} runs binaries"
+		else
+			fail "the temp dir ${tmp} does not run binaries (noexec?): Go tests, Playwright and pre-commit need it"
+		fi
+		rm -f "${probe}"
+	else
+		fail "the temp dir ${tmp} is not writable"
+	fi
+	[[ -r ${state} ]] || return 0
+	line="$(head -n 1 "${state}")"
+	case "${line}" in
+	"refused "*)
+		warn "HERDQUAY_WORKSPACE_TMP=1 but the workspace temp dir was refused: ${line#refused }; temp files stay in ${tmp}, invisible to the Docker daemon"
+		;;
+	"on "*)
+		dir="${line#on }"
+		if [[ ${TMPDIR:-} != "${dir}" ]]; then
+			warn "TMPDIR is ${TMPDIR:-unset}, not the workspace temp dir ${dir} (HERDQUAY_WORKSPACE_TMP=1)"
+		elif [[ -L ${dir} || ! -d ${dir} || ! -O ${dir} || $(stat -c %a "${dir}") != 700 ]]; then
+			warn "the workspace temp dir ${dir} is not a 0700 directory owned by $(id -un)"
+		else
+			ok "TMPDIR is the workspace temp dir ${dir}, emptied at every start (HERDQUAY_WORKSPACE_TMP=1)"
+		fi
+		;;
+	esac
 }
 
 # The GitHub configuration as herdquay-github and herdquay-gpg read it: the environment, else the github.env
@@ -324,6 +388,9 @@ doctor() {
 	section "Docker"
 	check_docker
 	check_session_env
+
+	section "Temp"
+	check_tmp
 
 	section "Git"
 	check_git_identity
