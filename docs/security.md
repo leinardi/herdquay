@@ -17,8 +17,11 @@ reach, what protects the rest, and which risks are accepted on purpose.
   on an unprivileged host user; `herdquay doctor` fails any daemon that is not rootless
   ([docker-diagnostics.md](docker-diagnostics.md)).
 - **SSH**: keys only, one user, the authorized keys rebuilt from a secret on every start (removing
-  a key from the secret revokes it at the next restart). No published web port. Network reach is
-  for the deployment to restrict ([deployment.md](deployment.md)).
+  a key from the secret revokes it at the next restart). Sessions get none of the container's
+  environment except the Docker endpoint: `PermitUserEnvironment` allows only `DOCKER_HOST`,
+  `DOCKER_TLS_VERIFY` and `DOCKER_CERT_PATH` from `~/.ssh/environment`, which the entrypoint
+  writes, and the client can send only the locale and terminal variables. No published web port.
+  Network reach is for the deployment to restrict ([deployment.md](deployment.md)).
 - **Remote Control** uses outbound HTTPS to Anthropic; nothing listens for it.
 
 ## Secrets

@@ -14,6 +14,10 @@ the current Docker context):
 | a configured daemon that does not answer | FAIL |
 | anything, while `/var/run/docker.sock` exists | FAIL |
 
+It also warns when the shell it runs in has a `DOCKER_HOST`, `DOCKER_TLS_VERIFY` or
+`DOCKER_CERT_PATH` other than the container's (see
+[How sessions get the variables](#how-sessions-get-the-variables)).
+
 ## 1. Read-only diagnostics (designed, not wired)
 
 Goal: let Claude read the state of the host's containers and services while debugging, never
@@ -66,8 +70,11 @@ and without per-container cgroups (below) one could starve the other.
 
 ### What HerdQuay needs from it
 
-- `DOCKER_HOST` set to the daemon: a Unix socket on a volume shared with HerdQuay only
-  (`unix:///<path>/docker.sock`), or TCP with TLS. Never at `/var/run/docker.sock`.
+- `DOCKER_HOST` set to the daemon, in the container's environment: a Unix socket on a volume
+  shared with HerdQuay only (`unix:///<path>/docker.sock`), or TCP with TLS
+  (`tcp://<host>:2376` with `DOCKER_TLS_VERIFY=1` and `DOCKER_CERT_PATH` set to a directory of
+  secret files readable by 568: `ca.pem`, `cert.pem`, `key.pem`). Never at
+  `/var/run/docker.sock`. `DOCKER_TLS` (TLS without verifying the daemon) is not supported.
 - The socket readable and writable by UID 568.
 - The daemon reports `rootless` in `docker info` (the doctor checks it).
 - HerdQuay's workspace mounted in the daemon's container **at the same path**,
@@ -75,6 +82,27 @@ and without per-container cgroups (below) one could starve the other.
 - The daemon's rootless user is UID 568 too, so files that containers write into bind mounts come
   back owned by 568. The upstream image's rootless user is 1000: with it, those files are not
   HerdQuay's.
+
+### How sessions get the variables
+
+Herdr panes and everything else the entrypoint starts inherit the container's environment. SSH
+sessions do not: sshd gives them an environment of its own. So at every start the entrypoint
+writes the container's `DOCKER_HOST`, `DOCKER_TLS_VERIFY` and `DOCKER_CERT_PATH`, those that are
+set, to `~/.ssh/environment`, and removes the file when none is. sshd reads it for every session
+(an interactive login, `ssh host cmd`, Herdr's own SSH commands) through
+`PermitUserEnvironment DOCKER_HOST,DOCKER_TLS_VERIFY,DOCKER_CERT_PATH`:
+
+- Only those three names: sshd ignores any other line in the file, `PATH` and `LD_PRELOAD`
+  included, and nothing else of the container's environment reaches a session. A client cannot
+  send them either (`AcceptEnv` is unchanged).
+- The values are taken literally, never through a shell. A value with a line break is ignored,
+  with a warning in the log.
+- Unset on the container means unset in sessions, never a default. A change takes a restart of
+  the container, and then a new SSH session.
+
+`herdquay doctor` compares its own shell's three variables with the container's (PID 1's), and
+warns about each that differs, as when a session exported its own or `~/.ssh/environment` was
+edited by hand: that session's `docker` then reaches another daemon than the panes do.
 
 ### Running it
 

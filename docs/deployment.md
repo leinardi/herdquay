@@ -63,7 +63,9 @@ a credential as an environment variable: `docker inspect` shows them.
   PyPI, nodejs.org, Playwright's CDN, and the providers opencode is logged in to.
 - No Docker API by default. Optionally a dedicated rootless daemon, HerdQuay's alone, with the
   socket, same-path workspace and UID 568 that [docker-diagnostics.md](docker-diagnostics.md#3-a-dedicated-rootless-daemon)
-  lists; `herdquay doctor` must report it as rootless.
+  lists; `herdquay doctor` must report it as rootless. Set `DOCKER_HOST` (and for TCP,
+  `DOCKER_TLS_VERIFY` and `DOCKER_CERT_PATH`) in the container's environment: Herdr panes inherit
+  it, and the entrypoint passes it on to SSH sessions. Nothing else is needed.
 
 ## Acceptance after deployment
 
