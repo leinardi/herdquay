@@ -35,13 +35,16 @@
 # git-credential get answers only for https://github.com and needs the repository path
 # (credential.useHttpPath): the token it prints is restricted to that one repository. Any other
 # host gets no answer, so Git falls through to its next helper. erase (sent by Git after a rejected
-# credential) drops the repository's cached token and installation id; store does nothing.
+# credential) drops the repository's cached token and installation id; store does nothing. A newly
+# minted token is only printed once GitHub's Git endpoint accepts it (see wait_for_git).
 #
 # Configuration, from the environment or else ~/.config/herdquay/github.env (KEY=value lines,
 # written by the entrypoint, because SSH sessions do not inherit the container's environment):
 #   HERDQUAY_GITHUB_APP_ID        the App ID or client ID (the JWT's iss)
 #   HERDQUAY_GITHUB_APP_KEY_FILE  the App's private key (default /run/secrets/github_app_key)
 #   HERDQUAY_GITHUB_API_URL       the REST API (default https://api.github.com)
+#   HERDQUAY_GITHUB_GIT_URL       the Git endpoint a new token is checked against (default
+#                                 https://github.com with the default API, else none: no check)
 #
 # The cache lives in /dev/shm/herdquay-github (directory 0700, files 0600, written atomically):
 # /dev/shm is the container's own RAM tmpfs under every orchestrator, unlike /tmp, which Swarm leaves
@@ -60,6 +63,8 @@ ENV_FILE="${HOME}/.config/herdquay/github.env"
 CACHE_DIR="/dev/shm/herdquay-github"
 # Seconds before expires_at from which a cached token is minted again.
 REFRESH_WINDOW=300
+# Seconds a newly minted token may take to be accepted by GitHub's Git endpoint.
+GIT_WAIT=20
 
 die() {
 	echo "herdquay-github: $*" >&2
@@ -72,13 +77,13 @@ usage() {
 }
 
 # The environment wins; the env file fills in whatever it leaves unset. The file is parsed, never
-# sourced, and only these three keys are read from it.
+# sourced, and only these four keys are read from it.
 load_config() {
 	local key value
 	if [[ -r ${ENV_FILE} ]]; then
 		while IFS='=' read -r key value; do
 			case "${key}" in
-			HERDQUAY_GITHUB_APP_ID | HERDQUAY_GITHUB_APP_KEY_FILE | HERDQUAY_GITHUB_API_URL)
+			HERDQUAY_GITHUB_APP_ID | HERDQUAY_GITHUB_APP_KEY_FILE | HERDQUAY_GITHUB_API_URL | HERDQUAY_GITHUB_GIT_URL)
 				if [[ -z ${!key:-} ]]; then
 					printf -v "${key}" '%s' "${value}"
 				fi
@@ -90,6 +95,12 @@ load_config() {
 	KEY_FILE="${HERDQUAY_GITHUB_APP_KEY_FILE:-/run/secrets/github_app_key}"
 	API_URL="${HERDQUAY_GITHUB_API_URL:-https://api.github.com}"
 	API_URL="${API_URL%/}"
+	if [[ ${API_URL} == https://api.github.com ]]; then
+		GIT_URL="${HERDQUAY_GITHUB_GIT_URL:-https://github.com}"
+	else
+		GIT_URL="${HERDQUAY_GITHUB_GIT_URL:-}"
+	fi
+	GIT_URL="${GIT_URL%/}"
 	if [[ -z ${APP_ID} && ! -e ${KEY_FILE} ]]; then
 		echo "herdquay-github: the GitHub App is not configured (no HERDQUAY_GITHUB_APP_ID, no ${KEY_FILE})" >&2
 		exit 3
@@ -203,22 +214,31 @@ installation_id() {
 	echo "${id}"
 }
 
+# cached_token FILE: the token cached in FILE, if it is valid for longer than REFRESH_WINDOW.
+cached_token() {
+	local file="$1" token expires
+	[[ -s ${file} ]] || return 1
+	token="$(jq -r '.token // empty' "${file}" 2>/dev/null || true)"
+	expires="$(jq -r '.expires_at // empty' "${file}" 2>/dev/null || true)"
+	expires="$(date -d "${expires}" +%s 2>/dev/null || echo 0)"
+	[[ -n ${token} ]] && ((expires - $(date +%s) > REFRESH_WINDOW)) || return 1
+	echo "${token}"
+}
+
 # A cached or newly minted installation token for a repository (owner/repo) or * (every repository
 # of the installation).
 installation_token() {
-	local repo="$1" id file token expires body='{}' auth response
+	local repo="$1" id file
 	cache_init
 	id="$(installation_id "${repo}")"
 	file="$(token_file "${id}" "${repo}")"
-	if [[ -s ${file} ]]; then
-		token="$(jq -r '.token // empty' "${file}" 2>/dev/null || true)"
-		expires="$(jq -r '.expires_at // empty' "${file}" 2>/dev/null || true)"
-		expires="$(date -d "${expires}" +%s 2>/dev/null || echo 0)"
-		if [[ -n ${token} ]] && ((expires - $(date +%s) > REFRESH_WINDOW)); then
-			echo "${token}"
-			return 0
-		fi
-	fi
+	cached_token "${file}" || mint_token "${repo}" "${id}" "${file}"
+}
+
+# mint_token REPO ID FILE: a new token for REPO (owner/repo or *) from installation ID, cached in
+# FILE.
+mint_token() {
+	local repo="$1" id="$2" file="$3" token body='{}' auth response
 	if [[ ${repo} != "*" ]]; then
 		body="$(jq -cn --arg name "${repo#*/}" '{repositories: [$name]}')"
 	fi
@@ -234,6 +254,29 @@ installation_token() {
 	echo "${token}"
 }
 
+# wait_for_git REPO TOKEN: returns once GitHub's Git endpoint accepts a newly minted TOKEN for REPO.
+# The REST API accepts a new token at once, but the Git endpoint can answer 404 (Repository not
+# found) for several seconds (measured on github.com: none to about 6 s), which failed the first
+# clone of a private repository. Gives up after GIT_WAIT seconds, or on any answer but 404 and 401,
+# and lets Git report whatever follows.
+wait_for_git() {
+	local repo="$1" token="$2" deadline code
+	[[ -n ${GIT_URL} ]] || return 0
+	deadline=$((SECONDS + GIT_WAIT))
+	while :; do
+		# The token reaches curl on stdin, never on the command line.
+		code="$(printf 'user = "x-access-token:%s"\n' "${token}" | curl -sS -o /dev/null -w '%{http_code}' \
+			--connect-timeout 10 --max-time 15 -K - "${GIT_URL}/${repo}.git/info/refs?service=git-upload-pack" ||
+			true)"
+		[[ ${code} == 404 || ${code} == 401 ]] || return 0
+		if ((SECONDS >= deadline)); then
+			echo "herdquay-github: GitHub's Git endpoint still refuses the new token for ${repo} (HTTP ${code}) after ${GIT_WAIT} s" >&2
+			return 0
+		fi
+		sleep 0.5
+	done
+}
+
 # owner/repo from Git's path (owner/repo.git, owner/repo, a trailing slash), or nothing.
 repository_from_path() {
 	local path="${1#/}" owner repo
@@ -247,7 +290,7 @@ repository_from_path() {
 }
 
 git_credential() {
-	local operation="${1:-}" line protocol="" host="" path="" repo file token
+	local operation="${1:-}" line protocol="" host="" path="" repo file token id
 	case "${operation}" in
 	get | erase) ;;
 	store) exit 0 ;;
@@ -277,7 +320,13 @@ git_credential() {
 		rm -f "${file}"
 		exit 0
 	fi
-	token="$(installation_token "${repo}")"
+	cache_init
+	id="$(installation_id "${repo}")"
+	file="$(token_file "${id}" "${repo}")"
+	if ! token="$(cached_token "${file}")"; then
+		token="$(mint_token "${repo}" "${id}" "${file}")"
+		wait_for_git "${repo}" "${token}"
+	fi
 	printf 'username=x-access-token\npassword=%s\n' "${token}"
 }
 

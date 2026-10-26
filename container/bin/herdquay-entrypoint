@@ -171,7 +171,7 @@ write_github_env() {
 	local file="${HERDQUAY_CONFIG_DIR}/github.env" tmp name
 	tmp="$(mktemp "${file}.XXXXXX")"
 	for name in HERDQUAY_GITHUB_APP_ID HERDQUAY_GITHUB_APP_KEY_FILE HERDQUAY_GITHUB_API_URL \
-		HERDQUAY_GIT_SIGNING_KEY_FILE; do
+		HERDQUAY_GITHUB_GIT_URL HERDQUAY_GIT_SIGNING_KEY_FILE; do
 		[[ -n ${!name:-} ]] || continue
 		if [[ ${!name} == *$'\n'* ]]; then
 			log "warning: ${name} contains a newline: ignored"
