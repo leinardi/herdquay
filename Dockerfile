@@ -70,6 +70,8 @@ RUN curl -fsSL -o /tmp/node.tar.xz \
 
 # Release binaries, each checked against its GitHub release asset digest
 # (gh api repos/<owner>/<repo>/releases/tags/<tag>).
+ARG CARGO_DENY_VERSION=0.20.2
+ARG CARGO_DENY_SHA256=9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
 ARG CHEZMOI_VERSION=2.73.3
 ARG CHEZMOI_SHA256=56db674bb755c6655d67df3dec3e6727631d1291f5fc799d3f1aded6d0e56472
 ARG GH_VERSION=2.103.0
@@ -95,6 +97,12 @@ RUN fetch() { curl -fsSL -o "$1" "$2" && echo "$3  $1" | sha256sum --check --str
 		"${GH_SHA256}" \
 	&& tar -xzf /tmp/gh.tar.gz -C /tmp \
 	&& install -D -m 0755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /opt/gh/bin/gh \
+	&& fetch /tmp/cargo-deny.tar.gz \
+		"https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+		"${CARGO_DENY_SHA256}" \
+	&& tar -xzf /tmp/cargo-deny.tar.gz -C /tmp \
+	&& install -D -m 0755 "/tmp/cargo-deny-${CARGO_DENY_VERSION}-x86_64-unknown-linux-musl/cargo-deny" \
+		/usr/local/bin/cargo-deny \
 	&& fetch /tmp/golangci-lint.tar.gz \
 		"https://github.com/golangci/golangci-lint/releases/download/v${GOLANGCI_LINT_VERSION}/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64.tar.gz" \
 		"${GOLANGCI_LINT_SHA256}" \
@@ -188,6 +196,7 @@ RUN apt-get update \
 		>/etc/apt/sources.list.d/docker.list \
 	&& apt-get update \
 	&& apt-get install -y --no-install-recommends \
+		acl \
 		bash-completion \
 		bc \
 		build-essential \
@@ -240,6 +249,7 @@ COPY --from=fetch /usr/local/go /usr/local/go
 COPY --from=fetch /opt/node /opt/node
 COPY --from=fetch /opt/gh /opt/gh
 COPY --from=fetch \
+	/usr/local/bin/cargo-deny \
 	/usr/local/bin/chezmoi \
 	/usr/local/bin/herdr \
 	/usr/local/bin/golangci-lint \

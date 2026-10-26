@@ -71,6 +71,7 @@ check_github() {
 
 echo "Release binaries"
 check_github herdr herdrdev/herdr HERDR_VERSION herdr-linux-x86_64
+check_github cargo-deny EmbarkStudios/cargo-deny CARGO_DENY_VERSION 'cargo-deny-{v}-x86_64-unknown-linux-musl.tar.gz'
 check_github chezmoi twpayne/chezmoi CHEZMOI_VERSION chezmoi-linux-amd64
 check_github gh cli/cli GH_VERSION 'gh_{v}_linux_amd64.tar.gz'
 check_github uv astral-sh/uv UV_VERSION uv-x86_64-unknown-linux-gnu.tar.gz

@@ -40,7 +40,7 @@ the same automated tests.
 | `CLAUDE_SIGNER_FINGERPRINT`, `container/keys/claude-code.asc` | pinned fingerprint | only when Anthropic rotates its release key: compare the new fingerprint with the [setup docs](https://code.claude.com/docs/en/setup) before replacing both |
 | `GO_VERSION`, `GO_SHA256` | SHA-256 | `https://go.dev/dl/?mode=json&include=all`; stay on the projects' minor line |
 | `NODE_VERSION`, `NODE_SHA256` | SHA-256 | the release's `SHASUMS256.txt`; stay on the 24 line until the projects move |
-| `CHEZMOI_VERSION`, `GH_VERSION`, `UV_VERSION`, `YQ_VERSION` (+ `_SHA256`) | release asset digest | `make check-updates` |
+| `CARGO_DENY_VERSION`, `CHEZMOI_VERSION`, `GH_VERSION`, `UV_VERSION`, `YQ_VERSION` (+ `_SHA256`) | release asset digest | `make check-updates` |
 | `OPENCODE_VERSION`, `OPENCODE_INTEGRITY` (a minimum) | npm's SHA-512 integrity of `@opencode/cli-linux-x64` (no build provenance) | `make check-updates`, from the package's `latest` tag; opencode updates itself in between, so bump it only to raise the floor. opencode 2 is only on npm: the GitHub releases of `anomalyco/opencode` are opencode 1 |
 | `GOLANGCI_LINT_VERSION`, `GORELEASER_VERSION` (+ `_SHA256`) | release asset digest | bump together with the projects that pin them (pre-commit revs, release workflows) |
 | `DROAST_VERSION`, `SHELLCHECK_VERSION` (+ `_SHA256`) | release asset digest | `make check-updates`; bump together with the projects' droast hook rev and their `setup-droast` and `setup-shellcheck` actions |

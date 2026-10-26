@@ -15,7 +15,8 @@ hook environments, Playwright browsers), cached in the home volume.
 | Node 24 + npm (lockfile v3) | image: Node 24.22.1; `npm ci` per project; `npm i -g` goes to `~/.local` |
 | Python 3 + venv | image: Python 3.14 (pre-commit, Herdr's hook, `http.server`) |
 | pre-commit 4.6.2 | image; hook environments in `~/.cache/pre-commit` |
-| Rust (rustup, `cargo`) | home volume: `herdquay-rust-install` puts rustup and the stable toolchain (minimum 1.99.1) there at start; `rust-toolchain.toml` channels install on first use; cargo tools per user, `cargo install --locked` into `~/.cargo/bin` |
+| Rust (rustup, `cargo`) | home volume: `herdquay-rust-install` puts rustup and the stable toolchain (minimum 1.99.1) there at start; `rust-toolchain.toml` channels install on first use; other cargo tools per user, `cargo install --locked` into `~/.cargo/bin` |
+| cargo-deny 0.20.2 (`cargo deny check`) | image: on PATH, so `cargo deny` finds it without a per-user install |
 | droast 1.7.0 | image, for tests that run it directly; pre-commit hooks build their own with `cargo` |
 | ShellCheck 0.11.0 on PATH (droast's bridge) | image |
 | golangci-lint 2.14.0 on PATH | image |
@@ -36,8 +37,8 @@ as the minimum and upgraded with `rustup update` ([operations.md](operations.md#
 
 It also has the CLI tools an agent or a GitHub runner usually has: `gh`, `chezmoi`, `uv`, `jq`,
 `yq`, `rg`, `fd`, `tree`, `wget`, `zip`/`unzip`/`xz`/`zstd`, `rsync`, `file`, `bc`, `gawk`,
-`sqlite3`, `dig`, `nc`, `ping`, `lsof`, `htop`, `strace`, `openssl`, `gpg`, `git-lfs`, `vim`,
-`nano`, `patch`.
+`sqlite3`, `setfacl`/`getfacl`, `dig`, `nc`, `ping`, `lsof`, `htop`, `strace`, `openssl`, `gpg`,
+`git-lfs`, `vim`, `nano`, `patch`.
 
 `uv` (and `uvx`) installs Python tools into the home volume, where they persist: `uv tool install`
 puts them in `~/.local/bin`, and a Python version they need other than the image's 3.14 in
@@ -54,3 +55,8 @@ puts them in `~/.local/bin`, and a Python version they need other than the image
 | Network shaping (`ifb`, `sch_netem`, …) | host kernel modules |
 | Release signing and publishing | GitHub OIDC and registry credentials: CI only |
 | Hardware access (I²C, USB devices) | no devices are passed in |
+
+POSIX ACLs (`setfacl`) work only where the filesystem supports them. The container's `/tmp`
+(overlayfs, or a tmpfs) usually does; a workspace on a ZFS dataset with NFSv4 ACLs does not, so
+with `HERDQUAY_WORKSPACE_TMP=1` a test that sets ACLs under `TMPDIR` fails there. Run such a test
+with `TMPDIR=/tmp`.
