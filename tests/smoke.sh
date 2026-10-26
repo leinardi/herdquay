@@ -130,6 +130,34 @@ grep -q '^  FAIL  /var/run/docker.sock exists' <<<"$(docker run --rm --entrypoin
 	die "herdquay doctor does not fail on /var/run/docker.sock"
 pass "doctor Docker check: none by default, rootless accepted, rootful, unreachable and the socket fail"
 
+# session_env <name> <in_ssh|in_login|in_tty>: the Docker variables a session of that kind sees,
+# one `HQ <name><<value>>` line each; DOCKER_CONFIG, not on the list, is never forwarded.
+# shellcheck disable=SC2016 # expanded by the session's shell
+SESSION_ENV_PROBE='for n in DOCKER_HOST DOCKER_TLS_VERIFY DOCKER_CERT_PATH DOCKER_CONFIG; do printf "HQ %s<%s>\n" "$n" "$(printenv "$n")"; done'
+session_env() {
+	"$2" "$1" "${SESSION_ENV_PROBE}" | grep '^HQ DOCKER_'
+}
+
+# assert_session_env <name> <expected lines>: the same view from `ssh host cmd`, a login shell and
+# an interactive login shell on a PTY.
+assert_session_env() {
+	local kind
+	[[ $(in_tty "$1" 'echo "HQI<$->"' | grep '^HQI<') == HQI\<*i* ]] ||
+		die "$1: the PTY session is not an interactive shell"
+	for kind in in_ssh in_login in_tty; do
+		[[ $(session_env "$1" "${kind}") == "$2" ]] ||
+			die "$1: ${kind} sees $(session_env "$1" "${kind}"), not $2"
+	done
+}
+
+NO_SESSION_ENV='HQ DOCKER_HOST<>
+HQ DOCKER_TLS_VERIFY<>
+HQ DOCKER_CERT_PATH<>
+HQ DOCKER_CONFIG<>'
+assert_session_env "${TEST_ID}" "${NO_SESSION_ENV}"
+in_ssh "${TEST_ID}" 'test ! -e ~/.ssh/environment' || die ".ssh/environment exists without a Docker variable"
+pass "no Docker variable on the container: none in SSH sessions"
+
 # Swarm ignores no-new-privileges, so nothing in the image may raise privileges in its place.
 privileged="$(docker run --rm --entrypoint bash "${IMAGE}" -c \
 	'find / -xdev -type f \( -perm -4000 -o -perm -2000 \) 2>/dev/null; getcap -r / 2>/dev/null')"
@@ -389,5 +417,54 @@ commit "${TEST_ID}-4" 'git verify-commit HEAD' 2>/dev/null || die "the commit af
 [[ $(in_ssh "${TEST_ID}-4" "herdquay-gpg --batch --with-colons --list-keys ${SIGNING_FINGERPRINT}" |
 	awk -F: '$1 == "pub" { print $7; exit }') == "${expiry}" ]] || die "herdquay-gpg did not pick up the renewed key"
 pass "renewed signing key (same fingerprint, new expiry) used for the next commit"
+
+# The Docker variables the deployment sets reach every kind of SSH session verbatim (sshd reads
+# ~/.ssh/environment, no shell does), and only the allow-listed ones. The crafted value is no
+# endpoint the doctor can reach: only its mismatch lines are checked here.
+# shellcheck disable=SC2016 # the $(...) and backticks are the payload, never expanded
+EVIL_HOST='tcp://127.0.0.1:1;$(touch /tmp/pwned) `touch /tmp/pwned` "q"'
+CERT_PATH='/run/secrets/docker tls'
+HERDQUAY_CLAUDE_INSTALL=0 HERDQUAY_RUST_INSTALL=0 start_container "${TEST_ID}-env" "${TEST_ID}-env-home" \
+	-e DOCKER_HOST="${EVIL_HOST}" -e DOCKER_TLS_VERIFY=1 -e DOCKER_CERT_PATH="${CERT_PATH}" -e DOCKER_CONFIG=/tmp/cfg
+wait_healthy "${TEST_ID}-env"
+expected="HQ DOCKER_HOST<${EVIL_HOST}>
+HQ DOCKER_TLS_VERIFY<1>
+HQ DOCKER_CERT_PATH<${CERT_PATH}>
+HQ DOCKER_CONFIG<>"
+assert_session_env "${TEST_ID}-env" "${expected}"
+docker exec "${TEST_ID}-env" test ! -e /tmp/pwned || die "a Docker variable's value was run by a shell"
+[[ $(docker exec "${TEST_ID}-env" bash -c 'tr "\0" "\n" <"/proc/$(pgrep -xo herdr)/environ"' |
+	grep -E '^DOCKER_(HOST|TLS_VERIFY|CERT_PATH)=' | sort) == "$(printf '%s\n' "DOCKER_CERT_PATH=${CERT_PATH}" \
+	"DOCKER_HOST=${EVIL_HOST}" DOCKER_TLS_VERIFY=1)" ]] || die "the Herdr server does not have the container's Docker variables"
+in_ssh "${TEST_ID}-env" 'herdquay doctor || true' | grep -q ' differs from the container' &&
+	die "herdquay doctor reports a mismatch where the session matches the container"
+grep -q '^  warn  DOCKER_HOST differs from the container.s: session tcp://other, container ' \
+	<<<"$(in_ssh "${TEST_ID}-env" 'DOCKER_HOST=tcp://other herdquay doctor || true')" ||
+	die "herdquay doctor does not report a session DOCKER_HOST that differs from the container's"
+pass "Docker variables on the container: verbatim in every SSH session and Herdr, the rest not; doctor compares"
+
+# sshd takes only the allow-listed names from the file, even when it is edited by hand.
+in_ssh "${TEST_ID}-env" 'printf "FOO=bar\nPATH=/evil\n" >>~/.ssh/environment'
+# shellcheck disable=SC2016 # expanded by the session's shell
+[[ $(in_ssh "${TEST_ID}-env" 'printf "%s|%s" "${FOO:-unset}" "${PATH}"') == unset\|/home/herdquay/.local/bin:* ]] ||
+	die "sshd took a name off the allow-list from ~/.ssh/environment"
+pass ".ssh/environment: names off the allow-list ignored"
+
+# Unset on the container is unset in sessions again, although the home volume persists.
+docker rm -f "${TEST_ID}-env" >/dev/null
+HERDQUAY_CLAUDE_INSTALL=0 HERDQUAY_RUST_INSTALL=0 start_container "${TEST_ID}-env2" "${TEST_ID}-env-home"
+wait_healthy "${TEST_ID}-env2"
+assert_session_env "${TEST_ID}-env2" "${NO_SESSION_ENV}"
+in_ssh "${TEST_ID}-env2" 'test ! -e ~/.ssh/environment' || die ".ssh/environment survived the variables' removal"
+docker rm -f "${TEST_ID}-env2" >/dev/null
+
+# A line break would end the value's line in ~/.ssh/environment: the variable is dropped instead.
+HERDQUAY_CLAUDE_INSTALL=0 HERDQUAY_RUST_INSTALL=0 start_container "${TEST_ID}-env3" "${TEST_ID}-env-home" \
+	-e "DOCKER_HOST=tcp://127.0.0.1:1"$'\n'"DOCKER_CONFIG=/tmp/cfg"
+wait_healthy "${TEST_ID}-env3"
+wait_log "${TEST_ID}-env3" 'warning: DOCKER_HOST contains a line break' 5
+assert_session_env "${TEST_ID}-env3" "${NO_SESSION_ENV}"
+docker rm -f "${TEST_ID}-env3" >/dev/null
+pass "removed or line-broken Docker variables: unset in SSH sessions"
 
 echo "smoke: all checks passed"

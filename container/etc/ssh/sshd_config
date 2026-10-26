@@ -30,6 +30,10 @@ ClientAliveInterval 30
 ClientAliveCountMax 6
 
 AcceptEnv LANG LC_* TERM COLORTERM
+# The deployment's Docker endpoint, and only that: herdquay-entrypoint rewrites ~/.ssh/environment
+# from the container's environment at every start, and sshd reads nothing else from it. Keep this
+# list in step with SESSION_ENV_NAMES there. Never a general pass-through.
+PermitUserEnvironment DOCKER_HOST,DOCKER_TLS_VERIFY,DOCKER_CERT_PATH
 # Every session, login or not (Herdr's background commands are not), gets the image's tool paths.
 SetEnv PATH=/home/herdquay/.local/bin:/home/herdquay/.opencode/bin:/home/herdquay/.cargo/bin:/home/herdquay/go/bin:/usr/local/go/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin GOTOOLCHAIN=auto LANG=C.UTF-8
 PrintMotd no

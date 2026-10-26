@@ -120,6 +120,26 @@ check_docker() {
 	fi
 }
 
+# SSH sessions get the container's Docker variables through ~/.ssh/environment (herdquay-entrypoint);
+# Herdr panes inherit them. Compares this shell's with the container's, PID 1's: a session that
+# exported its own, or an edited ~/.ssh/environment, reaches another daemon than the panes do.
+check_session_env() {
+	local entry name mine theirs
+	local -A container=()
+	[[ -r /proc/1/environ ]] || return 0
+	while IFS= read -r -d '' entry; do
+		case "${entry%%=*}" in
+		DOCKER_HOST | DOCKER_TLS_VERIFY | DOCKER_CERT_PATH) container["${entry%%=*}"]="${entry#*=}" ;;
+		esac
+	done 2>/dev/null </proc/1/environ || return 0
+	for name in DOCKER_HOST DOCKER_TLS_VERIFY DOCKER_CERT_PATH; do
+		mine="${!name:-}"
+		theirs="${container[${name}]:-}"
+		[[ ${mine} == "${theirs}" ]] && continue
+		warn "${name} differs from the container's: session ${mine:-unset}, container ${theirs:-unset} (SSH sessions get it from ~/.ssh/environment, rewritten at every start)"
+	done
+}
+
 # The GitHub configuration as herdquay-github and herdquay-gpg read it: the environment, else the github.env
 # the entrypoint writes for SSH sessions.
 github_config() {
@@ -303,6 +323,7 @@ doctor() {
 
 	section "Docker"
 	check_docker
+	check_session_env
 
 	section "Git"
 	check_git_identity

@@ -151,3 +151,18 @@ in_ssh() {
 		-o UserKnownHostsFile="${KNOWN_HOSTS}" -o StrictHostKeyChecking=accept-new \
 		-p "$(ssh_port "${name}")" "$@" herdquay@127.0.0.1 "${command}"
 }
+
+# in_login <name> <script>: the script on the stdin of an SSH session with no command, so sshd
+# starts the user's login shell, non-interactive.
+in_login() {
+	in_ssh "$1" "" <<<"$2"
+}
+
+# in_tty <name> <script>: the script typed into an interactive login shell on a PTY, as a plain
+# `ssh host` gets one. The output has the PTY's echo of the input and the prompts too: match lines
+# only the script's commands print. Carriage returns and the terminal's escape sequences (OSC, such
+# as Ubuntu's shell integration marks, and CSI) are dropped.
+in_tty() {
+	printf '%s\nexit\n' "$2" | in_ssh "$1" "" -tt |
+		LC_ALL=C sed -E $'s/\e\\][^\a\e]*(\a|\e\\\\)//g; s/\e\\[[0-9;?]*[@-~]//g; s/\r//g'
+}
