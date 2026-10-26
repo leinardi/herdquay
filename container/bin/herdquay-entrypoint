@@ -36,8 +36,11 @@
 # background and unsupervised (a miss is logged, never fatal). HERDQUAY_AGENT_RESTORE=1 makes
 # herdquay-agents resume them itself instead, the fallback for a Herdr release whose headless
 # restore stops working (turn native restore off with it). SSH sessions, which sshd gives an
-# environment of its own, get the deployment's Docker endpoint from ~/.ssh/environment, rewritten
-# at every start (write_session_env).
+# environment of its own, get the deployment's Docker endpoint, the daemon's hostname, the
+# Testcontainers overrides and the temp dir from ~/.ssh/environment, rewritten at every start
+# (write_session_env). HERDQUAY_WORKSPACE_TMP=1 moves TMPDIR to ~/workspace/.tmp, emptied at every
+# start, so that a dedicated Docker daemon, which sees only the workspace, can bind-mount temp
+# directories (workspace_tmp).
 
 set -euo pipefail
 
@@ -51,9 +54,12 @@ HERDR_DIR="${HOME}/.config/herdr"
 SHARE_DIR=/usr/local/share/herdquay
 OPENCODE_DIR="${HOME}/.opencode/bin"
 HERDQUAY_CONFIG_DIR="${HOME}/.config/herdquay"
+WORKSPACE_TMP="${HERDQUAY_WORKSPACE_TMP:-0}"
 # The variables SSH sessions get from this environment, through sshd's PermitUserEnvironment
-# (keep in step with its list in /etc/ssh/sshd_config): the Docker endpoint, and only that.
-SESSION_ENV_NAMES=(DOCKER_HOST DOCKER_TLS_VERIFY DOCKER_CERT_PATH)
+# (keep in step with its list in /etc/ssh/sshd_config): the Docker endpoint, the daemon's hostname,
+# the Testcontainers overrides and the temp dir, and only those.
+SESSION_ENV_NAMES=(DOCKER_HOST DOCKER_TLS_VERIFY DOCKER_CERT_PATH HERDQUAY_DOCKER_HOSTNAME
+	TESTCONTAINERS_HOST_OVERRIDE TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE TMPDIR CLAUDE_CODE_TMPDIR)
 
 log() {
 	printf '%s herdquay: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2
@@ -176,9 +182,62 @@ write_github_env() {
 	mv -f "${tmp}" "${file}"
 }
 
+# Published ports answer at the daemon's name, not at localhost: Testcontainers connects there when
+# the deployment names the daemon (HERDQUAY_DOCKER_HOSTNAME), unless the deployment overrides it.
+# TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE, the socket's path as the daemon sees it, is the
+# deployment's to set: this container's path to the socket means nothing to the daemon.
+docker_env() {
+	if [[ -n ${HERDQUAY_DOCKER_HOSTNAME:-} && -z ${TESTCONTAINERS_HOST_OVERRIDE:-} ]]; then
+		export TESTCONTAINERS_HOST_OVERRIDE="${HERDQUAY_DOCKER_HOSTNAME}"
+	fi
+}
+
+# workspace_tmp_refuse <state-file> <reason>: TMPDIR stays as it is, and the doctor learns why.
+workspace_tmp_refuse() {
+	log "warning: workspace temp dir refused: $2; TMPDIR is left unchanged"
+	printf 'refused %s\n' "$2" >"$1"
+}
+
+# HERDQUAY_WORKSPACE_TMP=1: TMPDIR (and Claude Code's temp dir) in ~/workspace/.tmp, which a
+# dedicated Docker daemon with the workspace mounted can bind-mount, unlike /tmp. Emptied at every
+# start. The path is fixed, and nothing is created, changed or deleted unless the workspace and
+# .tmp are real directories of ours: a symlink anywhere on the path, ancestors included, refuses
+# it. A failure is a warning, never fatal. The outcome is recorded for herdquay doctor.
+workspace_tmp() {
+	local ws="${HOME}/workspace" state="${STATE_DIR}/workspace-tmp" dir
+	dir="${ws}/.tmp"
+	if [[ ${WORKSPACE_TMP} != 1 ]]; then
+		rm -f "${state}"
+		return 0
+	fi
+	if [[ $(realpath -e -- "${ws}" 2>/dev/null) != "${ws}" || ! -d ${ws} || ! -O ${ws} ]]; then
+		workspace_tmp_refuse "${state}" "${ws} is not a real directory owned by $(id -un) (a symlink on its path?)"
+		return 0
+	fi
+	if [[ -e ${dir} || -L ${dir} ]]; then
+		if [[ -L ${dir} || ! -d ${dir} || ! -O ${dir} ]]; then
+			workspace_tmp_refuse "${state}" "${dir} is not a directory owned by $(id -un)"
+			return 0
+		fi
+	elif ! mkdir -m 0700 -- "${dir}" 2>/dev/null; then
+		workspace_tmp_refuse "${state}" "could not create ${dir}"
+		return 0
+	fi
+	if [[ $(realpath -e -- "${dir}" 2>/dev/null) != "${dir}" ]] || ! chmod 0700 -- "${dir}"; then
+		workspace_tmp_refuse "${state}" "${dir} changed while it was checked"
+		return 0
+	fi
+	if ! find "${dir}" -mindepth 1 -maxdepth 1 -exec rm -rf --one-file-system -- {} + 2>/dev/null; then
+		log "warning: could not empty ${dir} completely (files a container wrote as another user?)"
+	fi
+	export TMPDIR="${dir}" CLAUDE_CODE_TMPDIR="${dir}"
+	printf 'on %s\n' "${dir}" >"${state}"
+	log "TMPDIR is ${dir}, emptied"
+}
+
 # ~/.ssh/environment, which sshd reads (as literal NAME=value lines, never through a shell) for the
-# names its PermitUserEnvironment allows: the Docker variables this container has, none of them a
-# secret. Rewritten at every start and removed when none is set, so a variable the deployment
+# names its PermitUserEnvironment allows: the variables of SESSION_ENV_NAMES this process has, none
+# of them a secret. Rewritten at every start and removed when none is set, so a variable the deployment
 # drops is gone from SSH sessions too. A value with a line break would end its line: ignored.
 write_session_env() {
 	local file="${HOME}/.ssh/environment" tmp name
@@ -314,6 +373,8 @@ main() {
 	seed_config
 	install_opencode
 	write_github_env
+	docker_env
+	workspace_tmp
 	write_session_env
 	write_git_identity
 	# Before the Herdr server starts: its native restore resumes the Claude panes right away. A

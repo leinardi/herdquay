@@ -30,13 +30,15 @@ How to run, connect to, check and recover a HerdQuay container. The local Compos
 | `HERDQUAY_CLAUDE_INSTALL_TIMEOUT` | `300` | seconds each Claude Code download may take |
 | `HERDQUAY_RUST_INSTALL` | `1` | `0` skips installing rustup and the stable Rust toolchain at start ([Rust](#rust)) |
 | `HERDQUAY_RUST_INSTALL_TIMEOUT` | `600` | seconds each rustup run at start may take |
+| `HERDQUAY_DOCKER_HOSTNAME` | unset | the dedicated Docker daemon's name on the network it shares with HerdQuay, where published ports answer; also `TESTCONTAINERS_HOST_OVERRIDE` unless that is set ([Docker access](docker-diagnostics.md#published-ports)) |
+| `HERDQUAY_WORKSPACE_TMP` | `0` | `1` moves `TMPDIR` to `~/workspace/.tmp`, emptied at every start, so the dedicated Docker daemon can bind-mount temp directories ([Docker access](docker-diagnostics.md#bind-mounts-and-temp-files)) |
 | `HERDQUAY_AGENT_VERIFY_DELAY` | `120` | seconds after start before `herdquay-agents verify` checks the resumed sessions |
 
 The entrypoint writes the GitHub variables that are set (never a key) to
 `~/.config/herdquay/github.env` at every start, because SSH sessions do not inherit the
-container's environment. For the same reason it writes the Docker variables that are set
-(`DOCKER_HOST`, `DOCKER_TLS_VERIFY`, `DOCKER_CERT_PATH`) to `~/.ssh/environment`, which sshd reads
-for those three names only
+container's environment. For the same reason it writes the Docker endpoint, the daemon's hostname,
+the Testcontainers overrides and the temp dir, those that are set, to `~/.ssh/environment`, which
+sshd reads for those names only
 ([docker-diagnostics.md](docker-diagnostics.md#how-sessions-get-the-variables)).
 
 ### GitHub App

@@ -20,8 +20,11 @@ own secret handling.
 - `/tmp` must allow **`exec`**: Go tests, Playwright and pre-commit run binaries from it. With plain
   Docker or Compose, mount it as a tmpfs with `exec` (`nosuid,nodev` kept; Docker mounts a tmpfs
   `noexec` by default). Docker Swarm ignores a service's `tmpfs` and mounts a `tmpfs` volume
-  `noexec`, so there leave `/tmp` unmounted, on the container's writable layer. Keep the default
-  `/dev/shm`: the token cache and the signing keyring live there.
+  `noexec`, so there leave `/tmp` unmounted, on the container's writable layer. With
+  `HERDQUAY_WORKSPACE_TMP=1` the temp dir is `~/workspace/.tmp` instead, so the workspace volume
+  must allow `exec` too; it is emptied at every start, and can stay out of snapshots and backups
+  where the storage allows it. Keep the default `/dev/shm`: the token cache and the signing keyring
+  live there.
 - The image has a `HEALTHCHECK` (sshd listening on 2222, the Herdr server answering), with a
   6-minute start period that covers the first start's Claude Code download, and logs to
   stdout/stderr.
@@ -63,9 +66,12 @@ a credential as an environment variable: `docker inspect` shows them.
   PyPI, nodejs.org, Playwright's CDN, and the providers opencode is logged in to.
 - No Docker API by default. Optionally a dedicated rootless daemon, HerdQuay's alone, with the
   socket, same-path workspace and UID 568 that [docker-diagnostics.md](docker-diagnostics.md#3-a-dedicated-rootless-daemon)
-  lists; `herdquay doctor` must report it as rootless. Set `DOCKER_HOST` (and for TCP,
-  `DOCKER_TLS_VERIFY` and `DOCKER_CERT_PATH`) in the container's environment: Herdr panes inherit
-  it, and the entrypoint passes it on to SSH sessions. Nothing else is needed.
+  lists; `herdquay doctor` must report it as rootless. Set in the container's environment
+  `DOCKER_HOST` (and for TCP, `DOCKER_TLS_VERIFY` and `DOCKER_CERT_PATH`), `HERDQUAY_DOCKER_HOSTNAME`
+  (the daemon's name, where published ports answer), `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` (the
+  socket's path inside the daemon's container) and, to bind-mount temp directories,
+  `HERDQUAY_WORKSPACE_TMP=1`: Herdr panes inherit them, and the entrypoint passes them on to SSH
+  sessions.
 
 ## Acceptance after deployment
 
