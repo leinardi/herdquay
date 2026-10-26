@@ -1,9 +1,9 @@
 # Development environment
 
-HerdQuay carries the toolchains of typical Go, Node, Python and Rust projects, with the linters and
-release tools their Makefiles, pre-commit configs and CI workflows usually run. Shared toolchains
-are installed once; project dependencies stay in the projects (Go modules, `npm ci`, pre-commit
-hook environments, Playwright browsers), cached in the home volume.
+HerdQuay carries the toolchains of typical Go, Node, Python, Rust, OpenTofu and GNOME extension
+projects, with the linters and release tools their Makefiles, pre-commit configs and CI workflows
+usually run. Shared toolchains are installed once; project dependencies stay in the projects (Go
+modules, `npm ci`, pre-commit hook environments, Playwright browsers), cached in the home volume.
 
 ## Toolchains
 
@@ -24,7 +24,11 @@ hook environments, Playwright browsers), cached in the home volume.
 | Playwright 1.64.0: Chromium, Firefox, WebKit | image: the three browsers' system libraries; browsers per project in `~/.cache/ms-playwright` |
 | govulncheck, sqlc, svu, actionlint, checkmake, dclint | per project: `go run …@version`, pre-commit hook environments |
 | Docker CLI, buildx, Compose | image, client; a daemon only as the opt-in rootless one ([docker-diagnostics.md](docker-diagnostics.md)) |
-| trivy | not in the image: CI only |
+| OpenTofu 1.12.6 (`tofu fmt`, `tofu validate`) | image |
+| TFLint 0.64.0 | image; its plugins per user, `tflint --init` into `~/.tflint.d` |
+| terraform-docs 0.22.0 | image |
+| Trivy 0.75.0 | image; its vulnerability database per user, in `~/.cache/trivy` |
+| GNOME extensions: `gjs`, `glib-compile-schemas`, gettext (`xgettext`, `msgfmt`, `msgmerge`) | image: `gjs`, `libglib2.0-bin`, `gettext`; no GNOME Shell, so no `gnome-extensions pack` and no interactive Shell testing |
 
 No toolchain manager: one Go and one Node line are enough today, and a manager would be one more
 moving part. Revisit if two projects need different lines at once.
@@ -38,7 +42,7 @@ as the minimum and upgraded with `rustup update` ([operations.md](operations.md#
 It also has the CLI tools an agent or a GitHub runner usually has: `gh`, `chezmoi`, `uv`, `jq`,
 `yq`, `rg`, `fd`, `tree`, `wget`, `zip`/`unzip`/`xz`/`zstd`, `rsync`, `file`, `bc`, `gawk`,
 `sqlite3`, `setfacl`/`getfacl`, `dig`, `nc`, `ping`, `lsof`, `htop`, `strace`, `openssl`, `gpg`,
-`git-lfs`, `vim`, `nano`, `patch`.
+`git-lfs`, `tig`, `vim`, `nano`, `patch`.
 
 `uv` (and `uvx`) installs Python tools into the home volume, where they persist: `uv tool install`
 puts them in `~/.local/bin`, and a Python version they need other than the image's 3.14 in

@@ -3,7 +3,7 @@
 A persistent, remotely accessible AI coding environment for a homelab: one container that runs a
 [Herdr](https://herdr.dev) server, [Claude Code](https://code.claude.com),
 [opencode](https://opencode.ai), an unprivileged SSH server, Git, the GitHub CLI and the
-toolchains of typical Go, Node, Python and Rust projects.
+toolchains of typical Go, Node, Python, Rust, OpenTofu and GNOME extension projects.
 
 - **Desktop (Linux, macOS):** the local Herdr client attaches to the container's Herdr server over
   SSH, with the full interactive Claude Code terminal UI.
@@ -17,8 +17,9 @@ toolchains of typical Go, Node, Python and Rust projects.
 
 The image works and is tested locally: desktop attach over SSH, Remote Control from the phone,
 sessions that survive a client disconnect and resume after a container restart with no client
-attached, and the toolchains of typical Go, Node, Python and Rust projects. Images are published to
-`ghcr.io/leinardi/herdquay` by the [release workflow](docs/release.md)
+attached, and the toolchains of typical Go, Node, Python, Rust, OpenTofu and GNOME extension
+projects. Images are published to `ghcr.io/leinardi/herdquay` by the
+[release workflow](docs/release.md)
 ([deployment](docs/deployment.md) lists what a deployment must provide).
 
 ## Quick start (local)

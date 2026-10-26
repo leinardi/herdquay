@@ -37,7 +37,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends ca-certificates curl gnupg jq xz-utils \
+	&& apt-get install -y --no-install-recommends ca-certificates curl gnupg jq unzip xz-utils \
 	&& rm -rf /var/lib/apt/lists/*
 
 # Herdr publishes neither a checksum file nor a signature: the digest is the release asset's, from
@@ -86,6 +86,15 @@ ARG DROAST_VERSION=1.7.0
 ARG DROAST_SHA256=cadb963a040ba2e68641af764f794e5d4fb3371bb9b92255fa5027060b08ea6e
 ARG SHELLCHECK_VERSION=0.11.0
 ARG SHELLCHECK_SHA256=8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+# OpenTofu and its linters and scanners, at the versions the OpenTofu projects' CI pins.
+ARG OPENTOFU_VERSION=1.12.6
+ARG OPENTOFU_SHA256=50a6106fa4de523d09c87af85f3db1dd47535fc005727fdca6852146476b88ec
+ARG TERRAFORM_DOCS_VERSION=0.22.0
+ARG TERRAFORM_DOCS_SHA256=8ec66616777c66f3e622af4f2853e8ae399f38908ad4b262c9c526dd42501369
+ARG TFLINT_VERSION=0.64.0
+ARG TFLINT_SHA256=cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
+ARG TRIVY_VERSION=0.75.0
+ARG TRIVY_SHA256=c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f
 # uv, for Python tools and the Pythons they need, installed into the home volume (`uv tool install`).
 ARG UV_VERSION=0.13.5
 ARG UV_SHA256=f68d291c75783122dad58ab77def0e13f3233f358731db5d6d7e8715603b928f
@@ -122,6 +131,26 @@ RUN fetch() { curl -fsSL -o "$1" "$2" && echo "$3  $1" | sha256sum --check --str
 		"${SHELLCHECK_SHA256}" \
 	&& tar -xJf /tmp/shellcheck.tar.xz -C /tmp \
 	&& install -D -m 0755 "/tmp/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck \
+	&& fetch /tmp/tofu.tar.gz \
+		"https://github.com/opentofu/opentofu/releases/download/v${OPENTOFU_VERSION}/tofu_${OPENTOFU_VERSION}_linux_amd64.tar.gz" \
+		"${OPENTOFU_SHA256}" \
+	&& tar -xzf /tmp/tofu.tar.gz -C /tmp tofu \
+	&& install -m 0755 /tmp/tofu /usr/local/bin/tofu \
+	&& fetch /tmp/terraform-docs.tar.gz \
+		"https://github.com/terraform-docs/terraform-docs/releases/download/v${TERRAFORM_DOCS_VERSION}/terraform-docs-v${TERRAFORM_DOCS_VERSION}-linux-amd64.tar.gz" \
+		"${TERRAFORM_DOCS_SHA256}" \
+	&& tar -xzf /tmp/terraform-docs.tar.gz -C /tmp terraform-docs \
+	&& install -m 0755 /tmp/terraform-docs /usr/local/bin/terraform-docs \
+	&& fetch /tmp/tflint.zip \
+		"https://github.com/terraform-linters/tflint/releases/download/v${TFLINT_VERSION}/tflint_linux_amd64.zip" \
+		"${TFLINT_SHA256}" \
+	&& unzip -q /tmp/tflint.zip tflint -d /tmp \
+	&& install -m 0755 /tmp/tflint /usr/local/bin/tflint \
+	&& fetch /tmp/trivy.tar.gz \
+		"https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+		"${TRIVY_SHA256}" \
+	&& tar -xzf /tmp/trivy.tar.gz -C /tmp trivy \
+	&& install -m 0755 /tmp/trivy /usr/local/bin/trivy \
 	&& fetch /usr/local/bin/yq \
 		"https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" \
 		"${YQ_SHA256}" \
@@ -185,7 +214,8 @@ ARG DOCKER_COMPOSE_VERSION=5.6.1-1~ubuntu.26.04~resolute
 
 COPY --from=fetch /etc/apt/keyrings/docker.asc /etc/apt/keyrings/docker.asc
 
-# Ubuntu packages: the shell and runner-style CLI tools, the build toolchain, Python for pre-commit
+# Ubuntu packages: the shell and runner-style CLI tools, the build toolchain, GNOME extension tooling
+# (gjs for headless tests, glib-compile-schemas, gettext's translation tools), Python for pre-commit
 # and for Herdr's Claude integration hook (it reports each conversation's session id, so it can be
 # resumed after a restart), and sshd. openssh-server's postinst generates host keys; they are
 # deleted, because the real host key is generated once at run time on the persistent home volume.
@@ -209,14 +239,17 @@ RUN apt-get update \
 		fd-find \
 		file \
 		gawk \
+		gettext \
 		git \
 		git-lfs \
+		gjs \
 		gnupg \
 		htop \
 		iproute2 \
 		iputils-ping \
 		jq \
 		less \
+		libglib2.0-bin \
 		lsof \
 		nano \
 		ncurses-term \
@@ -233,6 +266,7 @@ RUN apt-get update \
 		rsync \
 		sqlite3 \
 		strace \
+		tig \
 		tini \
 		tree \
 		unzip \
@@ -256,6 +290,10 @@ COPY --from=fetch \
 	/usr/local/bin/goreleaser \
 	/usr/local/bin/droast \
 	/usr/local/bin/shellcheck \
+	/usr/local/bin/terraform-docs \
+	/usr/local/bin/tflint \
+	/usr/local/bin/tofu \
+	/usr/local/bin/trivy \
 	/usr/local/bin/uv \
 	/usr/local/bin/uvx \
 	/usr/local/bin/yq \
