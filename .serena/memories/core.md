@@ -8,7 +8,7 @@ Source map:
 - `container/etc/` -> `/etc`: sshd_config, system gitconfig (credential helper, HTTPS insteadOf rewrites, include of `~/.config/herdquay/identity.gitconfig`).
 - `compose.yaml` + optional `compose.github.yaml` overlay (added by `.mk/image.mk` when `local/secrets/github_app_key` exists).
 - `scripts/local-secrets.sh`: harness secrets in ignored `local/secrets/`, ACL-granted to UID 568.
-- `tests/`: `smoke.sh`, `supervision.sh` (CI), `projects.sh` (manual), `lib.sh`, `github-stub.py`.
+- `tests/`: `smoke.sh`, `supervision.sh` (CI), `lib.sh`, `github-stub.py`.
 
 Invariants:
 - No secret ever in image, build args, labels, env vars or Git; secrets only as files under `/run/secrets/` at run time.

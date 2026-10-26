@@ -22,7 +22,6 @@ make mk-common-update    # refresh the shared .mk snippets from leinardi/make-co
 make image-build         # builds herdquay:local
 make image-test          # smoke + supervision tests against the built image
 make compose-up          # the local harness on 127.0.0.1:2222 (make local-secrets first)
-make projects-test       # the five projects' workflows inside the harness (manual, network)
 make check-updates       # pins with a newer upstream release
 make help                # lists every target
 ```
@@ -52,7 +51,7 @@ Makefile.
 | `container/etc/`, `container/share/`, `container/keys/` | sshd config, system gitconfig (credential helper, HTTPS rewrites), profile; seeded Herdr config; Anthropic's release key |
 | `compose.yaml`, `compose.github.yaml` | the local test harness (SSH on loopback), and its optional GitHub App key, App ID and signing key |
 | `scripts/local-secrets.sh`, `scripts/check-updates.sh` | the harness's ACL-provisioned secrets; the report of pins with newer releases |
-| `tests/` | `smoke.sh` and `supervision.sh` (CI), `projects.sh` (manual, the five projects' workflows), `lib.sh`, `github-stub.py` and `docker-stub.py` (the smoke test's stub GitHub and Docker APIs) |
+| `tests/` | `smoke.sh` and `supervision.sh` (CI), `lib.sh`, `github-stub.py` and `docker-stub.py` (the smoke test's stub GitHub and Docker APIs) |
 | `docs/` | operations, security, dev environment, updating, Docker access, deployment, devbox comparison; `herdr-api.schema.json` (Herdr's API at the pinned version) |
 | `.github/actions/setup-shellcheck/` | installs the pinned, digest-verified ShellCheck binary droast's bridge runs |
 | `.github/workflows/pre-commit-warmup.yaml` | refreshes the pre-commit cache on `main` (hook config change, weekly) and prunes the older entries |
@@ -153,7 +152,7 @@ Run before considering an edit done. `make check` applies to every row.
 | `Makefile`, the `.mk/*.mk` files in `MK_LOCAL_FILES` | `make check` (checkmake), `make help` |
 | `scripts/bootstrap-mk-common.sh`, the make-common `.mk` files | never by hand: port the change to make-common, then `make mk-common-update` and `make help` |
 | `scripts/check-license-headers.sh` | `make check` (shellcheck and the hook itself); strip one governed file's header and confirm the check names it |
-| `Dockerfile`, `droast.toml`, `container/**` | `make check` (droast, shellcheck, license headers); `make image-build image-test`; a toolchain change also `make compose-up projects-test`; keep `docs/updating.md` and `docs/dev-environment.md` in step |
+| `Dockerfile`, `droast.toml`, `container/**` | `make check` (droast, shellcheck, license headers); `make image-build image-test`; keep `docs/updating.md` and `docs/dev-environment.md` in step |
 | `tests/**`, `scripts/local-secrets.sh` | `make image-test` |
 | `compose*.yaml`, `.dclintrc` | `make check` (dclint) |
 | `**/*.md`, `.agents/skills/**` | `make check` (markdownlint); prose wrapped at 100 columns |

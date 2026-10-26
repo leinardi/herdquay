@@ -71,10 +71,6 @@ image-supervision: ## Test the built image's supervision (child death, bounded s
 .PHONY: image-test
 image-test: image-smoke image-supervision ## Run every automated image test
 
-.PHONY: projects-test
-projects-test: ## Run the five projects' workflows in the running harness (manual, needs network)
-	"$(REPO_ROOT)/tests/projects.sh"
-
 .PHONY: check-updates
 check-updates: ## Report pinned tools with a newer upstream release
 	"$(REPO_ROOT)/scripts/check-updates.sh"

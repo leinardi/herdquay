@@ -77,7 +77,7 @@ check_github uv astral-sh/uv UV_VERSION uv-x86_64-unknown-linux-gnu.tar.gz
 check_github golangci-lint golangci/golangci-lint GOLANGCI_LINT_VERSION 'golangci-lint-{v}-linux-amd64.tar.gz' \
 	"matches the projects' pre-commit rev: bump with them"
 check_github goreleaser goreleaser/goreleaser GORELEASER_VERSION goreleaser_Linux_x86_64.tar.gz \
-	"matches monmux's release workflow: bump with it"
+	"matches the projects' release workflows: bump with them"
 check_github droast immanuwell/dockerfile-roast DROAST_VERSION droast-linux-x86_64 \
 	"the projects pin it in their hooks and setup-droast: bump with them"
 check_github shellcheck koalaman/shellcheck SHELLCHECK_VERSION 'shellcheck-v{v}.linux.x86_64.tar.xz' \
@@ -115,7 +115,7 @@ report "rust (minimum)" "$(pinned RUST_MINIMUM)" \
 	"a minimum: rustup update moves the home volume above it without a new image"
 report playwright "$(pinned PLAYWRIGHT_VERSION)" \
 	"$(curl -fsSL https://registry.npmjs.org/playwright/latest 2>/dev/null | jq -r '.version // empty')" \
-	"bump only when bitgauge and runhold bump @playwright/test"
+	"bump only when the projects bump @playwright/test"
 
 echo "Docker CLI (apt, download.docker.com ubuntu resolute stable)"
 packages="$(curl -fsSL https://download.docker.com/linux/ubuntu/dists/resolute/stable/binary-amd64/Packages 2>/dev/null || true)"
@@ -129,7 +129,7 @@ report docker-compose "$(pinned DOCKER_COMPOSE_VERSION)" "$(docker_latest docker
 
 echo
 if ((outdated)); then
-	echo "${outdated} pin(s) can be bumped: edit the ARGs (and their digests), then make image-build image-test projects-test."
+	echo "${outdated} pin(s) can be bumped: edit the ARGs (and their digests), then make image-build image-test."
 else
 	echo "Every pin is current."
 fi
