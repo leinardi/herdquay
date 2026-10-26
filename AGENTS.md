@@ -52,7 +52,7 @@ Makefile.
 | `container/etc/`, `container/share/`, `container/keys/` | sshd config, system gitconfig (credential helper, HTTPS rewrites), profile; seeded Herdr config; Anthropic's release key |
 | `compose.yaml`, `compose.github.yaml` | the local test harness (SSH on loopback), and its optional GitHub App key, App ID and signing key |
 | `scripts/local-secrets.sh`, `scripts/check-updates.sh` | the harness's ACL-provisioned secrets; the report of pins with newer releases |
-| `tests/` | `smoke.sh` and `supervision.sh` (CI), `projects.sh` (manual, the five projects' workflows), `lib.sh`, `github-stub.py` (the smoke test's stub GitHub API) |
+| `tests/` | `smoke.sh` and `supervision.sh` (CI), `projects.sh` (manual, the five projects' workflows), `lib.sh`, `github-stub.py` and `docker-stub.py` (the smoke test's stub GitHub and Docker APIs) |
 | `docs/` | operations, security, dev environment, updating, Docker access, deployment, devbox comparison; `herdr-api.schema.json` (Herdr's API at the pinned version) |
 | `.github/actions/setup-shellcheck/` | installs the pinned, digest-verified ShellCheck binary droast's bridge runs |
 | `.github/workflows/pre-commit-warmup.yaml` | refreshes the pre-commit cache on `main` (hook config change, weekly) and prunes the older entries |
@@ -82,7 +82,9 @@ Makefile.
   Claude credential or `authorized_keys`, not even in a test or an example. They reach the
   container as secret files at run time; the local harness keeps its copies in the ignored
   `local/` directory.
-- **No Docker socket, and never a read-write Docker API proxy.** Optional read-only
+- **No Docker socket, and never a read-write path to the host's Docker daemon** (no read-write
+  proxy). The one daemon HerdQuay may reach is a dedicated rootless one, an opt-in of the
+  deployment that `herdquay doctor` checks (`docs/docker-diagnostics.md`). Optional read-only
   diagnostics are a separate, opt-in deployment decision.
 - Every tool the image downloads is pinned and verified (checksum or signature) in the
   Dockerfile; the base image is pinned by tag (`ubuntu:26.04`, see `docs/updating.md`).

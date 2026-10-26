@@ -99,6 +99,47 @@ check_secret() {
 	fi
 }
 
+# The Docker daemon the CLI reaches, from DOCKER_HOST or the current context: none by default, and
+# when one is configured, only a dedicated rootless daemon, never the host's (docker-diagnostics.md).
+check_docker() {
+	local endpoint info
+	endpoint="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null)" ||
+		endpoint="${DOCKER_HOST:-}"
+	if [[ -e /var/run/docker.sock ]]; then
+		fail "/var/run/docker.sock exists: HerdQuay must never get the host's Docker socket"
+		return
+	fi
+	if [[ -z ${endpoint} || ${endpoint} == unix:///var/run/docker.sock ]]; then
+		ok "no Docker daemon configured (DOCKER_HOST unset)"
+	elif ! info="$(timeout 10 docker info --format '{{.ServerVersion}} {{json .SecurityOptions}}' 2>/dev/null)"; then
+		fail "the Docker daemon at ${endpoint} is unreachable"
+	elif [[ ${info} != *'"name=rootless"'* ]]; then
+		fail "the Docker daemon at ${endpoint} is not rootless: HerdQuay may only reach a dedicated rootless daemon"
+	else
+		ok "dedicated rootless Docker daemon at ${endpoint} (Docker ${info%% *})"
+	fi
+}
+
+# SSH sessions get the container's Docker variables through ~/.ssh/environment (herdquay-entrypoint);
+# Herdr panes inherit them. Compares this shell's with the container's, PID 1's: a session that
+# exported its own, or an edited ~/.ssh/environment, reaches another daemon than the panes do.
+check_session_env() {
+	local entry name mine theirs
+	local -A container=()
+	[[ -r /proc/1/environ ]] || return 0
+	while IFS= read -r -d '' entry; do
+		case "${entry%%=*}" in
+		DOCKER_HOST | DOCKER_TLS_VERIFY | DOCKER_CERT_PATH) container["${entry%%=*}"]="${entry#*=}" ;;
+		esac
+	done 2>/dev/null </proc/1/environ || return 0
+	for name in DOCKER_HOST DOCKER_TLS_VERIFY DOCKER_CERT_PATH; do
+		mine="${!name:-}"
+		theirs="${container[${name}]:-}"
+		[[ ${mine} == "${theirs}" ]] && continue
+		warn "${name} differs from the container's: session ${mine:-unset}, container ${theirs:-unset} (SSH sessions get it from ~/.ssh/environment, rewritten at every start)"
+	done
+}
+
 # The GitHub configuration as herdquay-github and herdquay-gpg read it: the environment, else the github.env
 # the entrypoint writes for SSH sessions.
 github_config() {
@@ -279,14 +320,10 @@ doctor() {
 	elif [[ -n ${app_id} ]]; then
 		ok "GitHub App ID: ${app_id}"
 	fi
-	if [[ -n ${DOCKER_HOST:-} ]]; then
-		warn "DOCKER_HOST is set (${DOCKER_HOST}): Docker diagnostics are an opt-in deployment decision"
-	else
-		ok "no Docker API configured (DOCKER_HOST unset)"
-	fi
-	if [[ -e /var/run/docker.sock ]]; then
-		fail "/var/run/docker.sock is mounted: HerdQuay must never get the Docker socket"
-	fi
+
+	section "Docker"
+	check_docker
+	check_session_env
 
 	section "Git"
 	check_git_identity

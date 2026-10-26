@@ -34,7 +34,10 @@ How to run, connect to, check and recover a HerdQuay container. The local Compos
 
 The entrypoint writes the GitHub variables that are set (never a key) to
 `~/.config/herdquay/github.env` at every start, because SSH sessions do not inherit the
-container's environment.
+container's environment. For the same reason it writes the Docker variables that are set
+(`DOCKER_HOST`, `DOCKER_TLS_VERIFY`, `DOCKER_CERT_PATH`) to `~/.ssh/environment`, which sshd reads
+for those three names only
+([docker-diagnostics.md](docker-diagnostics.md#how-sessions-get-the-variables)).
 
 ### GitHub App
 

@@ -35,7 +35,9 @@
 # previous run's Claude agents; once Herdr answers, herdquay-agents checks that it did, in the
 # background and unsupervised (a miss is logged, never fatal). HERDQUAY_AGENT_RESTORE=1 makes
 # herdquay-agents resume them itself instead, the fallback for a Herdr release whose headless
-# restore stops working (turn native restore off with it).
+# restore stops working (turn native restore off with it). SSH sessions, which sshd gives an
+# environment of its own, get the deployment's Docker endpoint from ~/.ssh/environment, rewritten
+# at every start (write_session_env).
 
 set -euo pipefail
 
@@ -49,6 +51,9 @@ HERDR_DIR="${HOME}/.config/herdr"
 SHARE_DIR=/usr/local/share/herdquay
 OPENCODE_DIR="${HOME}/.opencode/bin"
 HERDQUAY_CONFIG_DIR="${HOME}/.config/herdquay"
+# The variables SSH sessions get from this environment, through sshd's PermitUserEnvironment
+# (keep in step with its list in /etc/ssh/sshd_config): the Docker endpoint, and only that.
+SESSION_ENV_NAMES=(DOCKER_HOST DOCKER_TLS_VERIFY DOCKER_CERT_PATH)
 
 log() {
 	printf '%s herdquay: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2
@@ -171,6 +176,32 @@ write_github_env() {
 	mv -f "${tmp}" "${file}"
 }
 
+# ~/.ssh/environment, which sshd reads (as literal NAME=value lines, never through a shell) for the
+# names its PermitUserEnvironment allows: the Docker variables this container has, none of them a
+# secret. Rewritten at every start and removed when none is set, so a variable the deployment
+# drops is gone from SSH sessions too. A value with a line break would end its line: ignored.
+write_session_env() {
+	local file="${HOME}/.ssh/environment" tmp name
+	local -a names=()
+	tmp="$(mktemp "${file}.XXXXXX")"
+	for name in "${SESSION_ENV_NAMES[@]}"; do
+		[[ -n ${!name:-} ]] || continue
+		if [[ ${!name} == *[$'\n\r']* ]]; then
+			log "warning: ${name} contains a line break: ignored, SSH sessions do not get it"
+			continue
+		fi
+		printf '%s=%s\n' "${name}" "${!name}" >>"${tmp}"
+		names+=("${name}")
+	done
+	if ((${#names[@]} == 0)); then
+		rm -f "${tmp}" "${file}"
+		return 0
+	fi
+	chmod 0600 "${tmp}"
+	mv -f "${tmp}" "${file}"
+	log "SSH sessions get ${names[*]} from the container's environment"
+}
+
 # The commit identity, rewritten at every start into identity.gitconfig, which /etc/gitconfig
 # includes at the system level (so a user.* in ~/.gitconfig still wins): HERDQUAY_GIT_NAME and
 # HERDQUAY_GIT_EMAIL when both are set, otherwise the GitHub App's bot. When the bot's identity
@@ -283,6 +314,7 @@ main() {
 	seed_config
 	install_opencode
 	write_github_env
+	write_session_env
 	write_git_identity
 	# Before the Herdr server starts: its native restore resumes the Claude panes right away. A
 	# failed install is not fatal (the next start retries, herdquay doctor reports it), so a

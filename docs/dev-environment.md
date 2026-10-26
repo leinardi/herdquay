@@ -23,7 +23,7 @@ Playwright browsers), cached in the home volume.
 | goreleaser 2.18.1 (`check`, snapshot) |  | ✓ |  |  |  | image |
 | Playwright 1.64.0: Chromium, Firefox, WebKit |  |  |  | ✓ e2e, parity | ✓ screenshots | image: the three browsers' system libraries; browsers per project in `~/.cache/ms-playwright` |
 | govulncheck, sqlc, svu, actionlint, checkmake, dclint | ✓ | ✓ | ✓ | ✓ | ✓ | per project: `go run …@version`, pre-commit hook environments (dclint's Node 22 included) |
-| Docker CLI, buildx, Compose | ✓ |  | ✓ | ✓ | ✓ | image, client only ([docker-diagnostics.md](docker-diagnostics.md)) |
+| Docker CLI, buildx, Compose | ✓ |  | ✓ | ✓ | ✓ | image, client; a daemon only as the opt-in rootless one ([docker-diagnostics.md](docker-diagnostics.md)) |
 | trivy | CI |  | CI | CI | CI | not in the image: CI only |
 
 No toolchain manager: one Go and one Node cover all five projects today, and a manager would be
@@ -62,11 +62,11 @@ awtrix-controller, now in Rust (`make verify`, then `make check` after
 
 | Workflow | Projects | Why |
 | --- | --- | --- |
-| `docker-build`, `integration-image`, `go-test-image`, `harness-*` image builds | SDA, awtrix, bitgauge, runhold | no Docker daemon (by design); their bases also need a dhi.io login |
+| `docker-build`, `integration-image`, `go-test-image`, `harness-*` image builds | SDA, awtrix, bitgauge, runhold | no Docker daemon by default; with the opt-in rootless daemon, not validated yet. Their bases also need a dhi.io login |
 | `go-test-integration` with enforcement, `docker-run` | SDA | loads BPF programs and touches host cgroups and loop devices: CAP_BPF/CAP_SYS_ADMIN, host PID and cgroup namespaces |
 | `go-test-integration` (DinD), `lab-*`, `run` / `docker-run-agent` | runhold | privileged Docker-in-Docker, Swarm init, a Docker socket |
 | `go-test-integration-vm` | runhold | multipass / KVM |
-| `harness-*` network shaping | bitgauge | host kernel modules (`ifb`, `sch_netem`, …) and NET_ADMIN |
+| `harness-*` network shaping and measurements | bitgauge | host kernel modules (`ifb`, `sch_netem`, …), and per-container cgroups the rootless daemon does not have |
 | Release signing and publishing | all | GitHub OIDC and registry credentials: CI only |
 | Real `ddcutil` / I²C | monmux | hardware, and forbidden for agents by monmux's own rules |
 
