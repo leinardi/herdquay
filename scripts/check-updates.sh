@@ -84,6 +84,14 @@ check_github droast immanuwell/dockerfile-roast DROAST_VERSION droast-linux-x86_
 check_github shellcheck koalaman/shellcheck SHELLCHECK_VERSION 'shellcheck-v{v}.linux.x86_64.tar.xz' \
 	"the projects' setup-shellcheck pins it: bump with them"
 check_github yq mikefarah/yq YQ_VERSION yq_linux_amd64
+check_github opentofu opentofu/opentofu OPENTOFU_VERSION 'tofu_{v}_linux_amd64.tar.gz' \
+	"the OpenTofu projects' CI pins it: bump with them"
+check_github tflint terraform-linters/tflint TFLINT_VERSION tflint_linux_amd64.zip \
+	"the OpenTofu projects' CI pins it: bump with them"
+check_github terraform-docs terraform-docs/terraform-docs TERRAFORM_DOCS_VERSION 'terraform-docs-v{v}-linux-amd64.tar.gz' \
+	"the OpenTofu projects' CI pins it: bump with them"
+check_github trivy aquasecurity/trivy TRIVY_VERSION 'trivy_{v}_Linux-64bit.tar.gz' \
+	"the OpenTofu projects' CI pins it: bump with them"
 
 echo "Toolchains"
 current="$(pinned CLAUDE_VERSION)"
