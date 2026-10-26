@@ -254,7 +254,7 @@ in_ssh "${TEST_ID}" 'cp ~/.config/herdquay/github.env /tmp/github.env.orig &&
 [[ $(password "${TEST_ID}" o/r.git) != "${token}" && $(mint_count "${TEST_ID}") == $((count + 1)) ]] ||
 	die "a changed App ID reused the old App's token"
 in_ssh "${TEST_ID}" 'cp /tmp/github.env.orig ~/.config/herdquay/github.env &&
-	sed -i "s|^HERDQUAY_GITHUB_API_URL=.*|HERDQUAY_GITHUB_API_URL=http://127.0.0.1:18081|" ~/.config/herdquay/github.env'
+	sed -i "s#^HERDQUAY_GITHUB_\(API\|GIT\)_URL=.*#HERDQUAY_GITHUB_\1_URL=http://127.0.0.1:18081#" ~/.config/herdquay/github.env'
 [[ $(password "${TEST_ID}" o/r.git) == ghs_18081_* ]] || die "a changed API URL reused the old API's token"
 in_ssh "${TEST_ID}" 'cp /tmp/github.env.orig ~/.config/herdquay/github.env'
 [[ $(password "${TEST_ID}" o/r.git) == "${token}" ]] || die "the original token is no longer cached"
@@ -275,6 +275,22 @@ password "${TEST_ID}" o/z.git >/dev/null
 password "${TEST_ID}" o/z.git >/dev/null
 [[ $(mint_count "${TEST_ID}") == $((count + 3)) ]] || die "a token an hour from expiry was not reused"
 pass "token refresh: minted again inside the 5-minute window, reused outside it"
+
+# github.com can refuse a new token on its Git endpoint for seconds after minting it: the helper
+# waits until it is accepted, and only for a new token.
+in_ssh "${TEST_ID}" 'curl -fsS -d 2 http://127.0.0.1:18080/_stub/git-delay' >/dev/null
+start=${SECONDS}
+token="$(password "${TEST_ID}" o/slow.git)"
+elapsed=$((SECONDS - start))
+polls="$(in_ssh "${TEST_ID}" 'curl -fsS http://127.0.0.1:18080/_stub/git-polls')"
+((elapsed >= 2)) && [[ $(jq --arg t "${token}" 'map(select(. == $t)) | length' <<<"${polls}") -ge 2 ]] ||
+	die "the helper did not wait for the Git endpoint to accept a new token (${elapsed} s)"
+count="$(jq length <<<"${polls}")"
+password "${TEST_ID}" o/slow.git >/dev/null
+[[ $(jq length <<<"$(in_ssh "${TEST_ID}" 'curl -fsS http://127.0.0.1:18080/_stub/git-polls')") == "${count}" ]] ||
+	die "the helper checked a cached token against the Git endpoint again"
+in_ssh "${TEST_ID}" 'curl -fsS -d 0 http://127.0.0.1:18080/_stub/git-delay' >/dev/null
+pass "a new token is handed to Git once the Git endpoint accepts it; a cached one at once"
 
 if out="$(fill "${TEST_ID}" o/missing.git 2>&1)" || ! grep -q 'not installed on o/missing' <<<"${out}"; then
 	die "a repository without the App did not fail clearly: ${out}"

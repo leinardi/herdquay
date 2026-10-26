@@ -30,8 +30,11 @@
 # Usage: github-stub.py <port> <public-key.pem> <app-id>[,<app-id>...]
 #
 # Repositories of owner "o" are installed (installation 1), "o/missing" is not. Test-only
-# endpoints: GET /_stub/mints lists every token minted ({path, repositories, token}), and
-# POST /_stub/expires-in with a number of seconds sets the lifetime of the tokens minted next.
+# endpoints: GET /_stub/mints lists every token minted ({path, repositories, token}),
+# POST /_stub/expires-in with a number of seconds sets the lifetime of the tokens minted next, and
+# POST /_stub/git-delay with a number of seconds makes Git's endpoint
+# (GET /<owner>/<repo>.git/info/refs) refuse the tokens minted next with a 404 for that long, as
+# github.com can; GET /_stub/git-polls lists the tokens it was asked about.
 
 import base64
 import datetime
@@ -48,6 +51,8 @@ PUBLIC_KEY = sys.argv[2]
 APP_IDS = set(sys.argv[3].split(","))
 mints = []
 expires_in = 3600
+git_delay = 0
+git_polls = []
 
 
 def b64url_decode(part):
@@ -101,10 +106,30 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(401, {"message": "A JSON web token could not be decoded"})
         return False
 
+    def git_info_refs(self):
+        authorization = self.headers.get("Authorization", "")
+        try:
+            user, _, token = base64.b64decode(authorization[len("Basic "):]).decode().partition(":")
+        except ValueError:
+            user, token = "", ""
+        git_polls.append(token)
+        mint = next((m for m in mints if m["token"] == token), None)
+        repository = self.path.split("/")[2].removesuffix(".git")
+        if (not authorization.startswith("Basic ") or user != "x-access-token" or mint is None
+                or repository not in (mint["repositories"] or [repository])
+                or time.time() < mint["usable_at"]):
+            self.reply(404, {"message": "Repository not found."})
+        else:
+            self.reply(200, {})
+
     def do_GET(self):
         path = self.path
         if path == "/_stub/mints":
-            self.reply(200, mints)
+            self.reply(200, [{k: m[k] for k in ("path", "repositories", "token")} for m in mints])
+        elif path == "/_stub/git-polls":
+            self.reply(200, git_polls)
+        elif path.startswith("/o/") and path.endswith(".git/info/refs?service=git-upload-pack"):
+            self.git_info_refs()
         elif path in ("/users/herdquay-test%5Bbot%5D", "/users/herdquay-test[bot]"):
             self.reply(200, {"login": "herdquay-test[bot]", "id": 4242})
         elif not self.app_authorized():
@@ -119,18 +144,22 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(404, {"message": "Not Found"})
 
     def do_POST(self):
-        global expires_in
+        global expires_in, git_delay
         body = self.body()
         if self.path == "/_stub/expires-in":
             expires_in = int(body)
             self.reply(200, {"expires_in": expires_in})
+        elif self.path == "/_stub/git-delay":
+            git_delay = float(body)
+            self.reply(200, {"git_delay": git_delay})
         elif self.path != "/app/installations/1/access_tokens":
             self.reply(404, {"message": "Not Found"})
         elif self.app_authorized():
             repositories = json.loads(body or b"{}").get("repositories")
             token = "ghs_%d_%d_%s" % (PORT, len(mints) + 1, "-".join(repositories) if repositories else "all")
             expires = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=expires_in)
-            mints.append({"path": self.path, "repositories": repositories, "token": token})
+            mints.append({"path": self.path, "repositories": repositories, "token": token,
+                          "usable_at": time.time() + git_delay})
             self.reply(201, {"token": token, "expires_at": expires.strftime("%Y-%m-%dT%H:%M:%SZ")})
 
     def log_message(self, *args):

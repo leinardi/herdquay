@@ -22,6 +22,7 @@ How to run, connect to, check and recover a HerdQuay container. The local Compos
 | `HERDQUAY_GITHUB_APP_ID` | unset | the GitHub App's ID (or client ID); with the App key, Git and `gh` authenticate as the App ([GitHub App](#github-app)) |
 | `HERDQUAY_GITHUB_APP_KEY_FILE` | `/run/secrets/github_app_key` | the GitHub App's private key; optional |
 | `HERDQUAY_GITHUB_API_URL` | `https://api.github.com` | the REST API the tokens are minted from (the tests point it at a stub) |
+| `HERDQUAY_GITHUB_GIT_URL` | `https://github.com` with the default API, else unset | the Git endpoint a newly minted token is checked against before Git gets it: GitHub can refuse a new token there for a few seconds. Unset, no check |
 | `HERDQUAY_GIT_NAME`, `HERDQUAY_GIT_EMAIL` | unset | the commit identity, both or neither; unset, the App's bot (`<slug>[bot]`). Written to `~/.config/herdquay/identity.gitconfig` at every start; a `user.name` or `user.email` in `~/.gitconfig` overrides it |
 | `HERDQUAY_GIT_SIGNING_KEY_FILE` | `/run/secrets/git_signing_key` | armored GPG secret key without a passphrase; with `HERDQUAY_GIT_NAME` and `HERDQUAY_GIT_EMAIL`, commits and tags are signed ([Commit signing](#commit-signing)); optional |
 | `HERDQUAY_STOP_TIMEOUT` | `15` | seconds a child gets after SIGTERM before SIGKILL; keep it below the orchestrator's stop grace period (30 s in the harness) |
