@@ -16,9 +16,10 @@ require-suppression-reason = true
 report-unused-suppressions = true
 
 # DF005 (apt-get install without pinned versions) is info, so min-severity hides it on purpose:
-# the base is Ubuntu 26.04 pinned by tag, its apt sources float with every security update, and
-# exact pins would break the build at each fix. Reproducibility comes from the LTS release and
-# the pinned, checksummed downloads (the Docker CLI's own repository is pinned exactly).
+# the base is Ubuntu 26.04 pinned by digest, but its apt sources float with every security
+# update, and exact pins would break the build at each fix. Reproducibility comes from the base
+# digest, the LTS release and the pinned, checksummed downloads (the Docker CLI's own repository
+# is pinned exactly).
 
 # Reject any label outside [required-labels]
 strict-labels = true

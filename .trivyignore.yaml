@@ -9,6 +9,49 @@
 # the pinned version is the latest, or one held back on purpose (docs/updating.md). Review them
 # when they expire: bump the tool if a fixed release is out, otherwise extend the date.
 vulnerabilities:
+  # Ubuntu's apt in the pinned base. The fix (3.2.1ubuntu0.1) is in the archive, but no newer
+  # ubuntu:26.04 digest carries it yet; the purls name this version only, so the next base digest
+  # drops the exception by itself.
+  - id: CVE-2026-109518
+    purls:
+      - pkg:deb/ubuntu/apt@3.2.0?arch=amd64&distro=ubuntu-26.04
+      - pkg:deb/ubuntu/libapt-pkg7.0@3.2.0?arch=amd64&distro=ubuntu-26.04
+    statement: apt 3.2.0 in the pinned ubuntu:26.04 base; no rebuilt base digest is out yet.
+    expired_at: 2026-11-23
+  - id: CVE-2026-109383
+    paths: &npm-undici-paths
+      - opt/node/lib/node_modules/npm/node_modules/undici/package.json
+    statement: undici 6.28.0 bundled in npm of Node 24.22.1; 24.22.2, the latest 24.x, has it too.
+    expired_at: 2026-11-23
+  - id: CVE-2026-87018
+    paths: *npm-undici-paths
+    statement: undici bundled in npm (see CVE-2026-109383).
+    expired_at: 2026-11-23
+  - id: CVE-2026-78661
+    paths:
+      - opt/gh/bin/gh
+      - usr/libexec/docker/cli-plugins/docker-buildx
+      - usr/libexec/docker/cli-plugins/docker-compose
+      - usr/local/bin/goreleaser
+      - usr/local/bin/terraform-docs
+      - usr/local/bin/tflint
+      - usr/local/bin/tofu
+      - usr/local/bin/trivy
+    statement: >-
+      golang.org/x/net the binary was built with. gh 2.103.3, docker-buildx 0.38.1 and
+      docker-compose 5.7.0, the latest releases, still have it; goreleaser, terraform-docs, tflint,
+      tofu and trivy are held at the projects' versions.
+    expired_at: 2026-11-23
+  - id: CVE-2026-116587
+    paths:
+      - usr/local/bin/goreleaser
+      - usr/local/bin/tflint
+      - usr/local/bin/tofu
+      - usr/local/bin/trivy
+    statement: >-
+      github.com/go-jose/go-jose/v4 the binary was built with; each is held at the projects'
+      versions.
+    expired_at: 2026-11-23
   - id: CVE-2026-102276
     paths:
       - opt/node/lib/node_modules/npm/node_modules/brace-expansion/package.json
@@ -34,10 +77,9 @@ vulnerabilities:
       - usr/bin/pebble
       - usr/local/bin/golangci-lint
       - usr/local/bin/goreleaser
-      - usr/local/bin/yq
     statement: >-
       Go standard library the binary was built with. pebble is Ubuntu's package; golangci-lint and
-      goreleaser are held at the projects' versions; yq 4.54.1 is the latest release.
+      goreleaser are held at the projects' versions.
     expired_at: 2026-11-23
   - id: CVE-2026-78667
     paths: *go-stdlib-paths
@@ -52,7 +94,6 @@ vulnerabilities:
       - usr/bin/pebble
       - usr/local/bin/golangci-lint
       - usr/local/bin/goreleaser
-      - usr/local/bin/yq
       - usr/local/bin/tofu
       - usr/libexec/docker/cli-plugins/docker-buildx
       - usr/libexec/docker/cli-plugins/docker-compose
@@ -240,6 +281,10 @@ vulnerabilities:
     statement: terraform-docs 0.22.0 (see CVE-2026-25681).
     expired_at: 2026-11-23
   - id: GHSA-hrxh-6v49-42gf
+    paths: *terraform-docs-paths
+    statement: terraform-docs 0.22.0 (see CVE-2026-25681).
+    expired_at: 2026-11-23
+  - id: CVE-2026-111943
     paths: *terraform-docs-paths
     statement: terraform-docs 0.22.0 (see CVE-2026-25681).
     expired_at: 2026-11-23

@@ -2,8 +2,8 @@ name: Scheduled scan
 
 # A release is scanned once, when it is built. Vulnerabilities are published
 # every day, so the image people pull is scanned again every week, with the
-# release's own scanner and settings. A failure fails the run, which is what
-# makes it visible: fix it with a new release.
+# release's gate (trivy-gate, the latest Trivy, .trivyignore.yaml). A failure
+# fails the run, which is what makes it visible: fix it with a new release.
 on:
   schedule:
     # Mondays, 06:17 UTC: off the hour, when scheduled runs pile up.
@@ -20,8 +20,6 @@ permissions:
 env:
   IMAGE_REPO: ghcr.io/leinardi/herdquay
   PLATFORMS: linux/amd64
-  # Same pin as release.yaml, bumped by hand together with it.
-  TRIVY_VERSION: v0.74.0
 
 jobs:
   image:
@@ -32,16 +30,14 @@ jobs:
       # For .trivyignore.yaml, the same exceptions the release scan accepts.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Trivy
-        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
-          version: ${{ env.TRIVY_VERSION }}
+          persist-credentials: false
 
       # :latest is resolved once, to its index digest, and the platform image is
       # scanned by its own digest: a :latest that moves during the run cannot mix
       # two releases into one result.
-      - name: Scan the latest release
+      - name: Resolve the latest release
+        id: latest
         run: |
           set -euo pipefail
           INDEX=$(docker buildx imagetools inspect "$IMAGE_REPO:latest" --format '{{json .Manifest}}')
@@ -54,6 +50,14 @@ jobs:
             exit 1
           fi
           echo "Scanning $PLATFORMS: $PLATFORM_DIGEST"
-          trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
-            --ignorefile .trivyignore.yaml --exit-code 1 --platform "$PLATFORMS" \
-            "$IMAGE_REPO@$PLATFORM_DIGEST"
+          echo "digest=$PLATFORM_DIGEST" >> "$GITHUB_OUTPUT"
+
+      # The release's gate: every fixable HIGH or CRITICAL finding fails, the
+      # base's included, since the fix for an inherited one is a release on the
+      # base's newer digest. Trivy is its latest release,
+      # never pinned, so every scan runs the newest checks.
+      - name: Scan the latest release
+        uses: leinardi/gh-composite-actions/trivy-gate@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
+        with:
+          image: ${{ env.IMAGE_REPO }}@${{ steps.latest.outputs.digest }}
+          platform: ${{ env.PLATFORMS }}

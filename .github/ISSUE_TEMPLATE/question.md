@@ -42,11 +42,13 @@ assignees: []
 ## 4. Environment (if relevant)
 
 <!-- Fill in what makes sense for your question, or remove fields that don't apply. -->
+<!-- The image version:
+docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.version" }}' <container> -->
 
-* Project version / commit SHA: `?`
-* Operating system and version: `?`
-* Runtime and version (e.g., Node, Python, Java): `?`
-* Any relevant tooling / dependencies and versions: `?`
+* HerdQuay image version and digest: `?`
+* Orchestrator (Docker Compose, Docker Swarm, other) and Docker Engine version: `?`
+* Host operating system and version: `?`
+* `herdquay doctor` output (run over SSH; remove anything private): `?`
 
 ---
 

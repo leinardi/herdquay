@@ -50,8 +50,9 @@ GitHub, set up a GitHub App ([GitHub App](docs/operations.md#github-app)).
 
 ## Design principles
 
-- An Ubuntu 26.04 LTS base (`ubuntu:26.04`), pinned by tag so the official image's security
-  rebuilds are picked up: the owner's desktop release, close to GitHub's Ubuntu runners.
+- An Ubuntu 26.04 LTS base (`ubuntu:26.04`), pinned by digest so CI and the release build on the
+  same base, with Dependabot moving the digest to each security rebuild of the official image: the
+  owner's desktop release, close to GitHub's Ubuntu runners.
 - No root at runtime: SSH, Herdr and Claude run as one unprivileged user, UID:GID 568:568.
 - Nothing secret in the image or in Git: the GitHub App's private key arrives as a secret file at
   run time, and Git and `gh` use short-lived installation tokens minted from it, over HTTPS only.
@@ -70,7 +71,8 @@ make help                # lists every target
 The hooks cover the Dockerfile ([droast](https://github.com/immanuwell/dockerfile-roast), built by
 pre-commit with `cargo`, and running a local `shellcheck`), the Compose harness (dclint), shell
 (shellcheck), the workflows (actionlint), YAML, Markdown, the Makefile and the MIT license headers.
-See [AGENTS.md](AGENTS.md) for the conventions and the validation matrix.
+See [CONTRIBUTING.md](CONTRIBUTING.md) to get started, and [AGENTS.md](AGENTS.md) for the
+conventions and the validation matrix.
 
 ## Credits
 

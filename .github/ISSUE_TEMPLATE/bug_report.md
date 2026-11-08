@@ -9,16 +9,20 @@ assignees: []
 
 * [ ] I have checked that there are no duplicate active or recent issues (bugs, questions, or
   feature requests) describing this problem.
-* [ ] I am using the latest released version of this project (or have tested on the main/default
-  branch).
+* [ ] I am using the latest released image (`ghcr.io/leinardi/herdquay:latest`), or have tested an
+  image built from `main`.
+* [ ] This is not a security vulnerability (those go through the private process in SECURITY.md).
+* [ ] This is about the HerdQuay image, not about Claude Code, Herdr or opencode themselves.
 
 ## Step 2: Describe your environment
 
-* Project name / repository: `?`
-* Project version / commit SHA: `?`
-* Operating system and version: `?`
-* Runtime and version (e.g., Node, Python, Java): `?`
-* Any relevant tooling or dependencies and versions: `?`
+<!-- The image version:
+docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.version" }}' <container> -->
+
+* HerdQuay image version and digest: `?`
+* Orchestrator (Docker Compose, Docker Swarm, other) and Docker Engine version: `?`
+* Host operating system and version: `?`
+* `herdquay doctor` output (run over SSH; remove anything private): `?`
 
 ## Step 3: Describe the problem
 
@@ -42,10 +46,11 @@ assignees: []
 
 ### Relevant code, configuration, or data
 
-<!-- Paste the smallest possible code or config snippet that reproduces the issue. -->
+<!-- Paste the smallest Compose or stack file, or environment, that reproduces the issue. Never
+paste a secret: keys, tokens and authorized_keys stay out of issues. -->
 
-```text
-// Example snippet (replace with your own)
+```yaml
+# Example snippet (replace with your own)
 ```
 
 ### Error / log output

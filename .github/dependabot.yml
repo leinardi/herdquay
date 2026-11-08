@@ -4,7 +4,7 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
     # Wait a week after a release before proposing it (GitHub's default is
     # 3 days), so a broken or compromised release has time to be yanked.
     cooldown:
@@ -20,7 +20,7 @@ updates:
   - package-ecosystem: "pre-commit"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "monthly"
     cooldown:
       default-days: 7
     labels: ["dependencies", "ci"]
@@ -28,5 +28,27 @@ updates:
       prefix: "chore(deps)"
     groups:
       pre-commit-hooks:
+        patterns:
+          - "*"
+
+  # The Dockerfile's base, pinned as ubuntu:26.04@sha256:<digest> in one literal FROM (Dependabot
+  # does not read ARG defaults). The base is what the image ships, so a digest bump is fix(deps)
+  # and releases a patch. Only the digest moves: the next Ubuntu release (26.10, or the next LTS)
+  # is a deliberate change (docs/updating.md). Weekly, not monthly: a digest is usually an Ubuntu
+  # security rebuild, and the cooldown already adds a week.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    labels: ["dependencies", "ci"]
+    commit-message:
+      prefix: "fix(deps)"
+    ignore:
+      - dependency-name: "ubuntu"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    groups:
+      docker:
         patterns:
           - "*"

@@ -23,15 +23,17 @@
 # SOFTWARE.
 
 # Ubuntu 26.04 LTS: the owner's desktop release, close to GitHub's Ubuntu runners, and the distro
-# Playwright supports best. Pinned by tag, not digest: the official image is rebuilt with every
-# security update, and each rebuild is one we want.
-ARG BASE_IMAGE=ubuntu:26.04
+# Playwright supports best. Pinned by index digest, so CI and the release build on the same base:
+# Dependabot's docker entry moves the digest to each rebuild of the official image (a security
+# update is a new digest), and the tag keeps the line readable. Written once, in this literal
+# FROM, because Dependabot does not read ARG defaults; both stages below build on it.
+FROM ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c AS base
 
 # -------------------------------------------------------------------------------------------------
 # fetch: downloads and verifies every artifact that does not come from apt. Nothing from this
 # stage reaches the final image except the verified binaries.
 # -------------------------------------------------------------------------------------------------
-FROM ${BASE_IMAGE} AS fetch
+FROM base AS fetch
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG DEBIAN_FRONTEND=noninteractive
@@ -72,8 +74,8 @@ RUN curl -fsSL -o /tmp/node.tar.xz \
 # (gh api repos/<owner>/<repo>/releases/tags/<tag>).
 ARG CARGO_DENY_VERSION=0.20.2
 ARG CARGO_DENY_SHA256=9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
-ARG CHEZMOI_VERSION=2.73.3
-ARG CHEZMOI_SHA256=56db674bb755c6655d67df3dec3e6727631d1291f5fc799d3f1aded6d0e56472
+ARG CHEZMOI_VERSION=2.74.0
+ARG CHEZMOI_SHA256=442ebbe0152f423b302ce5c6d94ff005773e5d61455c45f4be00b3430ae396a2
 ARG GH_VERSION=2.103.0
 ARG GH_SHA256=fdd768eb70f6409f80fcfa9f3a1c0adf0fc98d827ab3ce0bed2ac22762c5d786
 ARG GOLANGCI_LINT_VERSION=2.14.0
@@ -98,8 +100,8 @@ ARG TRIVY_SHA256=c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c
 # uv, for Python tools and the Pythons they need, installed into the home volume (`uv tool install`).
 ARG UV_VERSION=0.13.5
 ARG UV_SHA256=f68d291c75783122dad58ab77def0e13f3233f358731db5d6d7e8715603b928f
-ARG YQ_VERSION=4.54.1
-ARG YQ_SHA256=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
+ARG YQ_VERSION=4.54.2
+ARG YQ_SHA256=44c7759059b4910827a0059a2757b22001e59360cdecdb2ef8dedc4b6c7e9f32
 RUN fetch() { curl -fsSL -o "$1" "$2" && echo "$3  $1" | sha256sum --check --strict -; } \
 	&& fetch /tmp/gh.tar.gz \
 		"https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
@@ -187,9 +189,13 @@ RUN curl -fsSL -o /tmp/opencode.tgz \
 	&& install -D -m 0755 /tmp/package/bin/opencode /usr/local/bin/opencode \
 	&& rm -rf /tmp/opencode.tgz /tmp/package
 
-# Docker's apt signing key, asserted to be the one Docker documents (primary key fingerprint).
+# Docker's apt signing key: the file is pinned by its SHA-256 (sha256sum of
+# https://download.docker.com/linux/ubuntu/gpg), and its primary key is asserted to be the one
+# Docker documents (fingerprint). A new file with the same key changes only the digest.
 ARG DOCKER_SIGNER_FINGERPRINT=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+ARG DOCKER_SIGNER_SHA256=1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570
 RUN curl -fsSL -o /tmp/docker.asc https://download.docker.com/linux/ubuntu/gpg \
+	&& echo "${DOCKER_SIGNER_SHA256}  /tmp/docker.asc" | sha256sum --check --strict - \
 	&& test "$(gpg --show-keys --with-colons /tmp/docker.asc | awk -F: '$1 == "fpr" { print $10; exit }')" \
 		= "${DOCKER_SIGNER_FINGERPRINT}" \
 	&& install -D -m 0644 /tmp/docker.asc /etc/apt/keyrings/docker.asc
@@ -197,7 +203,7 @@ RUN curl -fsSL -o /tmp/docker.asc https://download.docker.com/linux/ubuntu/gpg \
 # -------------------------------------------------------------------------------------------------
 # final
 # -------------------------------------------------------------------------------------------------
-FROM ${BASE_IMAGE}
+FROM base
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG DEBIAN_FRONTEND=noninteractive

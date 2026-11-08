@@ -7,7 +7,7 @@ from devbox and credits it in its header; nothing else is copied.
 
 | devbox | HerdQuay | Verdict and why |
 | --- | --- | --- |
-| Ubuntu 26.04 base | `ubuntu:26.04`, pinned by tag | **adopted**: the owner's desktop release too, and close to GitHub's runners. A DHI Debian 13 (`dhi.io/debian-base:trixie-dev`) base was built and tested first; it worked, but its hardening mostly goes unused in a 2.6 GB workstation, while it needed a dhi.io login everywhere (locally, CI, Dependabot) and mixes DHI's and Debian's apt repositories |
+| Ubuntu 26.04 base | `ubuntu:26.04`, pinned by digest (Dependabot moves it) | **adopted**: the owner's desktop release too, and close to GitHub's runners. A DHI Debian 13 (`dhi.io/debian-base:trixie-dev`) base was built and tested first; it worked, but its hardening mostly goes unused in a 2.6 GB workstation, while it needed a dhi.io login everywhere (locally, CI, Dependabot) and mixes DHI's and Debian's apt repositories |
 | sshd run by the dev user on 2222, no PAM, keys only, `StrictModes`, `MaxSessions 32`, client-alive | same | **adopted**: no root at run time; Herdr multiplexes many channels over one connection |
 | `useradd` with the host's UID/GID, the stock `ubuntu` user removed | the same, UID:GID 568:568 by build arg, password field `*` | **adapted**: matches the homelab's apps user; useradd's locked `!` would make sshd refuse even a key |
 | tini as PID 1, entrypoint that `exec`s sshd | tini, and an entrypoint that supervises sshd and `herdr server`, exits non-zero when either dies, stops both within a bound | **adapted**: the Herdr server must run before any client attaches, so that conversations resume unattended |
