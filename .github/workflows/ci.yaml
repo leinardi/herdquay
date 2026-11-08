@@ -10,8 +10,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: "${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}"
-  cancel-in-progress: true
+  # A pull request's runs share one group per branch, so a newer push cancels the older run. Every
+  # other run (a push to main, a dispatch) gets a group of its own: GitHub keeps only one pending
+  # run per group, so a shared group would let a newer push replace a queued run, and a release
+  # gate needs CI to have passed on that exact commit.
+  group: "${{ github.workflow }} @ ${{ github.event_name == 'pull_request' && github.event.pull_request.head.label || github.run_id }}"
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Every job reads the repository and nothing else, unless it says otherwise below.
 permissions:
@@ -30,8 +34,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
+      # The id gives the resolved Python version, which is part of the cache key.
       - name: Set up Python
+        id: python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.x"
@@ -39,15 +47,22 @@ jobs:
       - name: Install pre-commit
         run: pip install --no-cache-dir pre-commit==4.6.2
 
+      # droast's ShellCheck bridge and actionlint run the shellcheck on PATH: the pinned one, not
+      # the runner's. The version is the shellcheck-py rev's in .pre-commit-config.yaml; the
+      # action's default sha256 is that release's.
       - name: Set up ShellCheck
-        uses: ./.github/actions/setup-shellcheck
+        uses: leinardi/gh-composite-actions/setup-shellcheck@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
+        with:
+          version: v0.11.0
 
-      # Restore only: pre-commit-warmup.yaml saves the entry on main under the same key.
+      # Restore only: pre-commit-warmup.yaml saves the entry on main under the same key, with the
+      # same python_version and pre-commit version as above. The hook environments are bound to the
+      # interpreter that built them, so the resolved Python version is part of the key.
       - name: Restore the pre-commit cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/pre-commit
-          key: pre-commit|${{ runner.os }}|${{ hashFiles('.pre-commit-config.yaml') }}
+          key: pre-commit|${{ runner.os }}|${{ steps.python.outputs.python-version }}|${{ hashFiles('.pre-commit-config.yaml') }}
 
       - name: Run every pre-commit hook on every file
         run: pre-commit run --all-files --show-diff-on-failure
@@ -66,6 +81,7 @@ jobs:
   actionlint:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # reviewdog posts its findings as a pull request review, which needs pull-requests: write.
     permissions:
       contents: read
@@ -76,9 +92,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Run actionlint via pre-commit + reviewdog
-        uses: leinardi/gha-pre-commit-reviewdog-actions/actionlint@007919a45a04b0c52dfbb46732019dc4831fc03c # v1.0.3
+        uses: leinardi/gha-pre-commit-reviewdog-actions/actionlint@77e6e852b85ad28aa05bba731fa11be3305a5dac # v2.0.0
         with:
           from-ref: ${{ github.event.pull_request.base.sha }}
           to-ref: ${{ github.event.pull_request.head.sha }}
@@ -87,6 +104,7 @@ jobs:
   pre-commit-hooks:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # reviewdog posts its findings as a pull request review, which needs pull-requests: write.
     permissions:
       contents: read
@@ -97,13 +115,16 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       # droast's ShellCheck bridge runs the shellcheck on PATH: the pinned one, not the runner's.
       - name: Set up ShellCheck
-        uses: ./.github/actions/setup-shellcheck
+        uses: leinardi/gh-composite-actions/setup-shellcheck@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
+        with:
+          version: v0.11.0
 
       - name: Run pre-commit hooks + reviewdog diff
-        uses: leinardi/gha-pre-commit-reviewdog-actions/pre-commit-hooks@007919a45a04b0c52dfbb46732019dc4831fc03c # v1.0.3
+        uses: leinardi/gha-pre-commit-reviewdog-actions/pre-commit-hooks@77e6e852b85ad28aa05bba731fa11be3305a5dac # v2.0.0
         with:
           from-ref: ${{ github.event.pull_request.base.sha }}
           to-ref: ${{ github.event.pull_request.head.sha }}
@@ -122,6 +143,7 @@ jobs:
   markdownlint:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # reviewdog posts its findings as a pull request review, which needs pull-requests: write.
     permissions:
       contents: read
@@ -132,9 +154,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Run markdownlint-cli2 via pre-commit + reviewdog
-        uses: leinardi/gha-pre-commit-reviewdog-actions/markdownlint-cli2@007919a45a04b0c52dfbb46732019dc4831fc03c # v1.0.3
+        uses: leinardi/gha-pre-commit-reviewdog-actions/markdownlint-cli2@77e6e852b85ad28aa05bba731fa11be3305a5dac # v2.0.0
         with:
           from-ref: ${{ github.event.pull_request.base.sha }}
           to-ref: ${{ github.event.pull_request.head.sha }}
@@ -143,6 +166,7 @@ jobs:
   shellcheck:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # reviewdog posts its findings as a pull request review, which needs pull-requests: write.
     permissions:
       contents: read
@@ -153,9 +177,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Run shellcheck via pre-commit + reviewdog
-        uses: leinardi/gha-pre-commit-reviewdog-actions/shellcheck@007919a45a04b0c52dfbb46732019dc4831fc03c # v1.0.3
+        uses: leinardi/gha-pre-commit-reviewdog-actions/shellcheck@77e6e852b85ad28aa05bba731fa11be3305a5dac # v2.0.0
         with:
           from-ref: ${{ github.event.pull_request.base.sha }}
           to-ref: ${{ github.event.pull_request.head.sha }}
@@ -164,6 +189,7 @@ jobs:
   yamllint:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # reviewdog posts its findings as a pull request review, which needs pull-requests: write.
     permissions:
       contents: read
@@ -174,9 +200,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Run yamllint via pre-commit + reviewdog
-        uses: leinardi/gha-pre-commit-reviewdog-actions/yamllint@007919a45a04b0c52dfbb46732019dc4831fc03c # v1.0.3
+        uses: leinardi/gha-pre-commit-reviewdog-actions/yamllint@77e6e852b85ad28aa05bba731fa11be3305a5dac # v2.0.0
         with:
           from-ref: ${{ github.event.pull_request.base.sha }}
           to-ref: ${{ github.event.pull_request.head.sha }}
@@ -191,22 +218,27 @@ jobs:
     # commits. No pull-request title check: squash merging is disabled.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Validate the commit messages
-        uses: leinardi/gha-pre-commit-reviewdog-actions/conventional-commits@007919a45a04b0c52dfbb46732019dc4831fc03c # v1.0.3
+        uses: leinardi/gha-pre-commit-reviewdog-actions/conventional-commits@77e6e852b85ad28aa05bba731fa11be3305a5dac # v2.0.0
         with:
           from-ref: ${{ github.event.pull_request.base.sha }}
           to-ref: ${{ github.event.pull_request.head.sha }}
 
-  # Decides whether the image job runs: only when something that goes into the image or its tests
-  # changed, since a build costs minutes on a private repository. A manual dispatch, and a push
-  # whose "before" commit is unknown (a new branch, a force-push), always build.
+  # Decides whether the image job runs on a pull request: only when something that goes into the
+  # image or its tests changed, so a docs-only pull request skips the build. A push to main and a
+  # manual dispatch always build: release.yaml gates on ci-result of the exact commit it releases
+  # (require-ci-green), and only a full image job on that commit proves its image passed the suite.
+  # A skip on a push would only say "no input changed since the previous push", whose own CI may
+  # have failed.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -218,6 +250,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: List the changed paths
         id: diff
@@ -225,18 +258,17 @@ jobs:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
-          PUSH_AFTER: ${{ github.sha }}
         run: |
           set -euo pipefail
-          image_paths='^(Dockerfile|\.dockerignore|compose[^/]*\.ya?ml|Makefile|droast\.toml|\.github/workflows/ci\.yaml)$|^(container|tests|scripts|\.mk|\.github/actions)/'
-          case "${EVENT}" in
-            pull_request) base="${PR_BASE}" head="${PR_HEAD}" ;;
-            push) base="${PUSH_BEFORE}" head="${PUSH_AFTER}" ;;
-            *) base="" head="" ;;
-          esac
+          image_paths='^(Dockerfile|\.dockerignore|compose[^/]*\.ya?ml|Makefile|droast\.toml|\.github/workflows/ci\.yaml)$|^(container|tests|scripts|\.mk)/'
+          if [[ ${EVENT} != pull_request ]]; then
+            echo "A ${EVENT} run always builds the image: the release gates on it."
+            echo "image=true" >>"${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          base="${PR_BASE}" head="${PR_HEAD}"
           if [[ -z ${base} || ${base} =~ ^0+$ ]] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
-            echo "No comparable base (${EVENT}): building the image."
+            echo "No comparable base: building the image."
             echo "image=true" >>"${GITHUB_OUTPUT}"
             exit 0
           fi
@@ -249,8 +281,10 @@ jobs:
           fi
 
   # Builds the image and runs its automated tests: the smoke test (SSH, doctor, GitHub client
-  # configuration, secrets, persistence) and the supervision test (child death, bounded stop).
-  # Every input is public (ubuntu:26.04 and the pinned downloads), so the job needs no secret.
+  # configuration, secrets, persistence), the supervision test (child death, bounded stop) and the
+  # release's short smoke test. The release builds the same Dockerfile, default target, on the same
+  # pinned base digest, and runs only the short one (docs/release.md). Every input is public (the
+  # pinned ubuntu:26.04 digest and the pinned downloads), so the job needs no secret.
   image:
     needs: changes
     if: needs.changes.outputs.image == 'true'
@@ -260,10 +294,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Every FROM pinned by digest and every download verified, before minutes of building: the
+      # release runs the same check, so CI and the release build on the same base.
+      - name: Check the Dockerfile pins
+        uses: leinardi/gh-composite-actions/check-pinned-bases@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      # The layer cache is CI's own scope, written only on main: a pull request reads it and never
+      # writes it. The release builds under its own scope (release-herdquay) and never reads this.
       - name: Build the image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -274,8 +317,8 @@ jobs:
           build-args: |
             VERSION=ci
             REVISION=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=ci-herdquay
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,scope=ci-herdquay,mode=max' || '' }}
 
       # The tests provision their secrets with POSIX ACLs (scripts/local-secrets.sh).
       - name: Install the ACL tools
@@ -291,10 +334,19 @@ jobs:
           HERDQUAY_IMAGE: herdquay:ci
         run: tests/supervision.sh
 
+      # The release's own short test, so a change that breaks it fails here and not mid-release.
+      - name: Release smoke test
+        env:
+          HERDQUAY_IMAGE: herdquay:ci
+          HERDQUAY_EXPECT_VERSION: ci
+          HERDQUAY_EXPECT_REVISION: ${{ github.sha }}
+        run: tests/release-smoke.sh
+
   # The single required check: green only when every gating job succeeded. conventional-commits
   # only runs on pull requests, so it may be skipped on a push or a dispatch. image may be skipped
-  # only when changes succeeded and said no image input changed; any other skip, failure or
-  # cancellation fails the gate. A repository that adds a gating job adds it to needs.
+  # only when changes succeeded and said no image input changed, which it says on pull requests
+  # only; any other skip, failure or cancellation fails the gate. A repository that adds a gating
+  # job adds it to needs.
   ci-result:
     if: always()
     needs:
