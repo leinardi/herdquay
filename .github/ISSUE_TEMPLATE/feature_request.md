@@ -9,6 +9,8 @@ assignees: []
 
 * [ ] I have checked the existing issues to confirm this feature has not already been requested.
 * [ ] I believe this feature fits the scope and goals of this project.
+* [ ] It belongs in the image itself, not in a deployment of it (Ansible, Swarm stacks and host
+  setup live outside this repository).
 
 ---
 
@@ -33,10 +35,10 @@ assignees: []
 <!-- Describe how you imagine this feature working. Be as specific as possible. -->
 
 * **High-level description:**
-    *
+  *
 
 * **Example usage / scenario:**
-    *
+  *
 
 ---
 
