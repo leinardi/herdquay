@@ -21,6 +21,7 @@ make pre-commit-install  # installs the pre-commit and commit-msg hooks
 make mk-common-update    # refresh the shared .mk snippets from leinardi/make-common@v1
 make image-build         # builds herdquay:local
 make image-test          # smoke + supervision tests against the built image
+make image-release-smoke # the release's short smoke test against the built image
 make compose-up          # the local harness on 127.0.0.1:2222 (make local-secrets first)
 make check-updates       # pins with a newer upstream release
 make help                # lists every target
@@ -29,11 +30,15 @@ make help                # lists every target
 Before calling a change done, run `make check`: checkmake, actionlint, markdownlint, shellcheck,
 prettier, yamllint, dclint, droast (Dockerfile Roast) and the license headers. pre-commit builds
 droast from source at its pinned rev, which needs a Rust toolchain (`cargo`) locally. Its required
-ShellCheck bridge runs the `shellcheck` on PATH, so install ShellCheck locally at the release
-`.github/actions/setup-shellcheck` pins (CI installs it with that action). In CI, `ci-result` is the
-one required check: it needs `pre-commit-all`, `conventional-commits`, `changes` and `image`
-(`ci.yaml`); `image` builds the image and runs the smoke and supervision tests, and may only be
-skipped when `changes` found no image input changed. The reviewdog jobs only annotate pull requests.
+ShellCheck bridge runs the `shellcheck` on PATH, so install ShellCheck locally at the
+`shellcheck-py` rev's release (CI installs it with gh-composite-actions' `setup-shellcheck`). In CI,
+`ci-result` is the one required check: it needs `pre-commit-all`, `conventional-commits`, `changes`
+and `image` (`ci.yaml`); `image` checks the Dockerfile pins (`check-pinned-bases`), builds the image
+and runs the smoke, supervision and release smoke tests. It may only be skipped on a pull request
+where `changes` found no image input changed: a push to `main` always builds, because the release
+gates on CI of its exact commit instead of re-running the suites
+([`docs/release.md`](docs/release.md#what-ci-proves)). The reviewdog jobs only annotate pull
+requests.
 
 The Makefile pulls shared snippets from `leinardi/make-common@v1` into `.mk/` on first run. Project
 targets live in the local `.mk/*.mk` files listed in `MK_LOCAL_FILES`, never as recipes in the
@@ -44,16 +49,15 @@ Makefile.
 | Path | What lives there |
 | --- | --- |
 | `Makefile`, `.mk/`, `scripts/bootstrap-mk-common.sh` | make-common: shared snippets in `MK_COMMON_FILES`, local ones in `MK_LOCAL_FILES` |
-| `.github/workflows/ci.yaml` | `pre-commit-all`, `conventional-commits` and the `ci-result` aggregator; the reviewdog jobs on pull requests |
-| `.github/workflows/release.yaml`, `scheduled-scan.yaml`, `.trivyignore.yaml` | the dispatched release (image to GHCR, attested, signed; [`docs/release.md`](docs/release.md)), the weekly scan of `:latest`, and the scans' accepted findings |
-| `Dockerfile` | the image: a `fetch` stage that downloads and verifies every non-apt artifact, then the final stage on the same Ubuntu 26.04 base |
+| `.github/workflows/ci.yaml` | `pre-commit-all`, `conventional-commits`, `changes`, `image` and the `ci-result` aggregator; the reviewdog jobs on pull requests |
+| `.github/workflows/release.yaml`, `scheduled-scan.yaml`, `.trivyignore.yaml` | the dispatched release (`guard`, `ci-green`, `release`: image to GHCR, attested, signed; [`docs/release.md`](docs/release.md)), the weekly scan of `:latest`, and the scans' accepted findings |
+| `Dockerfile` | the image: a digest-pinned Ubuntu 26.04 `base` stage, a `fetch` stage that downloads and verifies every non-apt artifact, then the final stage on the same base |
 | `container/bin/` | `herdquay-entrypoint` (supervisor), `herdquay-agents` (restore check and fallback), `herdquay-healthcheck`, `herdquay-claude-install` and `herdquay-rust-install` (installs into the home volume at start), `herdquay` (doctor), `herdquay-github` (GitHub App tokens, Git credential helper), `herdquay-gpg` (commit signing), the `gh` wrapper |
 | `container/etc/`, `container/share/`, `container/keys/` | sshd config, system gitconfig (credential helper, HTTPS rewrites), profile; seeded Herdr config; Anthropic's release key |
 | `compose.yaml`, `compose.github.yaml` | the local test harness (SSH on loopback), and its optional GitHub App key, App ID and signing key |
 | `scripts/local-secrets.sh`, `scripts/check-updates.sh` | the harness's ACL-provisioned secrets; the report of pins with newer releases |
-| `tests/` | `smoke.sh` and `supervision.sh` (CI), `lib.sh`, `github-stub.py` and `docker-stub.py` (the smoke test's stub GitHub and Docker APIs) |
+| `tests/` | `smoke.sh` and `supervision.sh` (CI), `release-smoke.sh` (the release's short test, also in CI), `lib.sh`, `github-stub.py` and `docker-stub.py` (the smoke test's stub GitHub and Docker APIs) |
 | `docs/` | operations, security, dev environment, updating, Docker access, deployment, devbox comparison; `herdr-api.schema.json` (Herdr's API at the pinned version) |
-| `.github/actions/setup-shellcheck/` | installs the pinned, digest-verified ShellCheck binary droast's bridge runs |
 | `.github/workflows/pre-commit-warmup.yaml` | refreshes the pre-commit cache on `main` (hook config change, weekly) and prunes the older entries |
 | `scripts/check-license-headers.sh` | the MIT license-header check, an always-run pre-commit hook ([License headers](#license-headers)) |
 | `droast.toml`, `.dclintrc`, `.dockerignore` | Dockerfile and Compose lint rules, and the build context's exclusions |
@@ -85,8 +89,42 @@ Makefile.
   proxy). The one daemon HerdQuay may reach is a dedicated rootless one, an opt-in of the
   deployment that `herdquay doctor` checks (`docs/docker-diagnostics.md`). Optional read-only
   diagnostics are a separate, opt-in deployment decision.
-- Every tool the image downloads is pinned and verified (checksum or signature) in the
-  Dockerfile; the base image is pinned by tag (`ubuntu:26.04`, see `docs/updating.md`).
+- Every tool the image downloads is pinned and verified by checksum in the Dockerfile, and the base
+  image is pinned by digest in one literal `FROM ubuntu:26.04@sha256:… AS base`, which Dependabot
+  moves (`docs/updating.md`). `check-pinned-bases` enforces both in CI and the release.
+
+## GitHub conventions
+
+Shared by every `leinardi/*` repository.
+
+- **Jobs:** every job sets `timeout-minutes` (a composite action cannot time out its own steps).
+  Every checkout that pushes nothing sets `persist-credentials: false`; the release's checkout
+  sets it too, and its tag push passes the token to that one `git push`.
+- **Concurrency:** CI groups a pull request's runs by `${{ github.workflow }} @ <head label>` and
+  cancels the older one; every other run (a push to the default branch, a dispatch) gets its own
+  group, `${{ github.run_id }}`, because GitHub keeps one pending run per group and the release
+  gate needs CI on the exact commit (see `ci.yaml`). A warm-up uses `<name>-${{ github.ref }}`,
+  never a static group. The release uses the one `release` group and is never cancelled.
+- **Caches:** the default branch is the only writer, because every pull request can restore its
+  caches and the default branch cannot restore a pull request's. The pre-commit cache is saved
+  only by `pre-commit-warmup.yaml`; CI restores it with `actions/cache/restore` under the same key,
+  `pre-commit|<OS>|<resolved Python version>|<hash of .pre-commit-config.yaml>`, so CI sets up the
+  warm-up's `python_version` and installs its pre-commit version. CI's buildx cache is
+  `scope=ci-herdquay`, written on `main` only; the release writes `scope=release-herdquay`.
+- **pre-commit** is pinned to the same version in CI, the warm-up and the
+  `gha-pre-commit-reviewdog-actions` jobs (their `pre-commit-version` input).
+- **Release:** `release.yaml` is a `workflow_dispatch` with an optional `version` and a `dry_run`,
+  built from gh-composite-actions (`release-version`, `require-ci-green`, `release-mode`,
+  `check-pinned-bases`, `trivy-gate`). svu derives the version from the commits only when none is
+  given, and is installed only then, so a version entered by hand releases even when GitHub's
+  release downloads fail. Trivy is never pinned: `trivy-gate` installs its latest release.
+- **Dependabot:** monthly, `cooldown: default-days: 7`, labels `dependencies` and `ci`, one group
+  per ecosystem. The `docker` entry (the base digest) ships, so it is weekly and uses
+  `fix(deps)`; GitHub Actions and pre-commit use `chore(deps)`.
+- **Issue and pull request templates:** keep the Step 1/2/3 structure of template-default, with
+  this repository's project name, version command, environment block, snippet language and extra
+  checkboxes. The pull request checklist always keeps the Conventional Commits and
+  validation-matrix items.
 
 ## License headers
 
@@ -146,14 +184,14 @@ Run before considering an edit done. `make check` applies to every row.
 
 | You edited | Run |
 | --- | --- |
-| `.github/workflows/**`, `.github/dependabot.yml` | `pre-commit run actionlint --all-files`; reason through each trigger the workflow has (pull request, push, dispatch, schedule); for `release.yaml`, keep `docs/release.md` in step and dispatch a dry run |
+| `.github/workflows/**`, `.github/dependabot.yml` | `pre-commit run actionlint --all-files`; reason through each trigger the workflow has (pull request, push, dispatch, schedule); for `release.yaml`, keep `docs/release.md` in step and dispatch a dry run once CI passed on the commit; for `ci.yaml`'s `image` job and `changes` filter, keep `docs/release.md#what-ci-proves` true |
 | `.trivyignore.yaml` | every entry scoped to paths, with a statement and an `expired_at`; scan `herdquay:local` with the release's Trivy command |
 | `.pre-commit-config.yaml` | `make check`; a hook that needs a system tool also gets it in `ci.yaml`'s `pre-commit-all` |
 | `Makefile`, the `.mk/*.mk` files in `MK_LOCAL_FILES` | `make check` (checkmake), `make help` |
 | `scripts/bootstrap-mk-common.sh`, the make-common `.mk` files | never by hand: port the change to make-common, then `make mk-common-update` and `make help` |
 | `scripts/check-license-headers.sh` | `make check` (shellcheck and the hook itself); strip one governed file's header and confirm the check names it |
-| `Dockerfile`, `droast.toml`, `container/**` | `make check` (droast, shellcheck, license headers); `make image-build image-test`; keep `docs/updating.md` and `docs/dev-environment.md` in step |
-| `tests/**`, `scripts/local-secrets.sh` | `make image-test` |
+| `Dockerfile`, `droast.toml`, `container/**` | `make check` (droast, shellcheck, license headers); gh-composite-actions' `check-pinned-bases/check-pinned-bases.sh Dockerfile`; `make image-build image-test image-release-smoke`; keep `docs/updating.md` and `docs/dev-environment.md` in step |
+| `tests/**`, `scripts/local-secrets.sh` | `make image-test image-release-smoke` |
 | `compose*.yaml`, `.dclintrc` | `make check` (dclint) |
 | `**/*.md`, `.agents/skills/**` | `make check` (markdownlint); prose wrapped at 100 columns |
 
