@@ -1,20 +1,19 @@
 name: Release herdquay
 
-# One dispatch resolves the version, verifies, decides the release mode, builds
-# the image, tests and scans that exact image, tags, publishes the image and the
-# GitHub release, and moves the `latest` pointers. Adapted from
-# leinardi/awtrix-controller's release workflow: the same order and recovery
-# rules, with one image (linux/amd64) and no release binaries.
+# One dispatch resolves the version, checks that CI passed on the commit, decides
+# the release mode, builds the image once, smoke-tests and scans that exact
+# image, tags, publishes the image and the GitHub release, and moves the
+# `latest` pointers. One image (linux/amd64) and no release binaries.
 #
 # The order of the release job is deliberate: everything that can fail does so
 # before the tag exists, because tags in this repository are immutable ("Immutable
 # tags" ruleset: no update, no deletion, no bypass) and cannot be cleaned up after
-# a failure. The image is built once, into a job-local registry, and tested and
-# scanned there; only that digest is copied to GHCR, after the tag. Everything
+# a failure. The image is built once, into a job-local registry, and smoke-tested
+# and scanned there; only that digest is copied to GHCR, after the tag. Everything
 # after the tag push reuses what is already published only once it is proven to
 # be this run's, and never replaces it, so a re-run with the same explicit
 # version finishes a failed publish. docs/release.md is the prose version of
-# this, with the recovery procedure.
+# this, with the recovery procedure and why the full image tests run in CI only.
 on:
   workflow_dispatch:
     inputs:
@@ -25,8 +24,8 @@ on:
       version:
         description: "Version, e.g. 0.1.0 or v0.1.0 (empty: derive from the commits)"
         required: false
-      # Resolves the version, verifies, builds, tests and scans the image, and
-      # stops there: no tag is pushed and nothing is published.
+      # Resolves the version, checks CI, builds, smoke-tests and scans the image,
+      # and stops there: no tag is pushed and nothing is published.
       dry_run:
         description: "Dry run: build, test and scan, stop before the tag is pushed"
         type: boolean
@@ -46,27 +45,18 @@ permissions:
   contents: read
 
 env:
-  # Pinned by hand: dependabot does not track a `go install` argument.
-  SVU_VERSION: v3.4.1
-  # Builds svu only; the Dockerfile's GO_VERSION, bumped by hand with it.
-  GO_VERSION: 1.26.10
   # The one definition of a release tag: vMAJOR.MINOR.PATCH, strict SemVer core
-  # with no leading zeros, no pre-release and no build metadata. Every lookup
-  # below filters the full tag list through this with grep -E, never through a
-  # glob: `v[0-9]*.[0-9]*.[0-9]*` also matches v1.2.3-rc.1, v1.2.3+meta and
-  # v1foo.2bar.3baz, any of which could otherwise become the current version or
-  # break version resolution, and a leading-zero tag like v01.2.3 would be a
-  # permanent malformed release.
+  # with no leading zeros, no pre-release and no build metadata, the same regex
+  # release-version and release-mode use. The late checks below filter the full
+  # tag list through it with grep -E, never through a glob.
   RELEASE_TAG_REGEX: '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
-  APP_NAME: herdquay
   IMAGE_REPO: ghcr.io/leinardi/herdquay
   # The workflow every published artifact must come from. The guard job makes
   # every run of this file a run on refs/heads/main, so the keyless cosign
-  # identity a sign in this run produces is exactly SIGNER_IDENTITY, and a
-  # signature or an attestation from any other workflow or branch does not count.
+  # identity a sign in this run produces is exactly the one release-mode checks
+  # a reused image for, and a signature or an attestation from any other workflow
+  # or branch does not count.
   SIGNER_WORKFLOW: leinardi/herdquay/.github/workflows/release.yaml
-  SIGNER_IDENTITY: https://github.com/leinardi/herdquay/.github/workflows/release.yaml@refs/heads/main
-  SIGNER_ISSUER: https://token.actions.githubusercontent.com
   # The Dockerfile downloads linux-amd64 toolchains: one platform.
   PLATFORMS: linux/amd64
   # The job-local registries the image is built into, and a dry run copies to.
@@ -77,9 +67,6 @@ env:
   # Copies the scanned index to GHCR with its digest. skopeo v1.24.1 is
   # released on GitHub but has no image on quay.io, so this is v1.22.3.
   SKOPEO_IMAGE: quay.io/skopeo/stable:v1.22.3-immutable@sha256:c0ee1f4edca5c01cb8d5611124f92f3cc47196ecab68aee5d0f90834e00574d5
-  # Pinned by hand, like SVU_VERSION: setup-trivy installs whatever it is given.
-  # scheduled-scan.yaml scans with the same version; bump both together.
-  TRIVY_VERSION: v0.74.0
 
 jobs:
   # workflow_dispatch lets the caller pick any branch, and the release job holds
@@ -92,8 +79,19 @@ jobs:
   # being created from the wrong commit. The second line of defence is the
   # `release` environment, whose deployment branch rule is configured by hand -
   # docs/release.md.
+  #
+  # Then the version: explicit, or derived by svu from the commits, and in both
+  # cases higher than every release, unless it is the recovery of this exact tag
+  # on this commit (release-version).
   guard:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      previous: ${{ steps.version.outputs.previous }}
+      explicit: ${{ steps.version.outputs.explicit }}
+      recovery: ${{ steps.version.outputs.recovery }}
+      major: ${{ steps.major.outputs.major }}
 
     steps:
       - name: Refuse to release anything but main
@@ -106,42 +104,58 @@ jobs:
             exit 1
           fi
 
-  # Repeated from ci.yaml's pre-commit-all rather than referenced, so that a
-  # release never depends on which push last ran CI. The image tests run in the
-  # release job itself, against the very digest that is published.
-  lint:
-    needs: guard
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Python
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.x"
+          # release-version reads every tag and the commits since the last one.
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
 
-      - name: Install pre-commit
-        run: pip install --no-cache-dir pre-commit==4.6.2
+      # Only to derive a version: a version typed by hand releases even while
+      # GitHub's release downloads fail.
+      - name: Install svu
+        if: inputs.version == ''
+        uses: leinardi/gh-composite-actions/setup-svu@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
 
-      - name: Set up ShellCheck
-        uses: ./.github/actions/setup-shellcheck
-
-      - name: Restore the pre-commit cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Resolve the version to release
+        id: version
+        uses: leinardi/gh-composite-actions/release-version@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
         with:
-          path: ~/.cache/pre-commit
-          key: pre-commit|${{ runner.os }}|${{ hashFiles('.pre-commit-config.yaml') }}
+          version: ${{ inputs.version }}
 
-      - name: Run every pre-commit hook on every file
-        run: pre-commit run --all-files --show-diff-on-failure
+      # The image's moving major tag is the bare number (:0, :1), as it has always
+      # been; release-version's `major` output is the git form (v0).
+      - name: Name the image major tag
+        id: major
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "major=${VERSION%%.*}" >> "$GITHUB_OUTPUT"
+
+  # The release-time lint and full image tests are replaced by this gate: CI
+  # (ci.yaml) must have passed on this exact commit, on its push to main. Its
+  # ci-result needs pre-commit-all and the image job, which on a push to main
+  # always builds this Dockerfile on the same pinned base digest and runs the
+  # full smoke and supervision suites (docs/release.md, "What CI proves").
+  ci-green:
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      actions: read
+
+    steps:
+      - name: Require CI green on this commit
+        uses: leinardi/gh-composite-actions/require-ci-green@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
+        with:
+          accepted-events: push
 
   release:
     needs:
       - guard
-      - lint
+      - ci-green
     runs-on: ubuntu-latest
     timeout-minutes: 90
     # Created on first run with no protection rules, which changes nothing by
@@ -155,188 +169,45 @@ jobs:
       attestations: write # provenance attestation upload
 
     steps:
+      # No persisted credentials: the one step that writes to the repository, the
+      # tag push, passes the token to that one git command.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # svu reads the tags and the commits since the last one.
+          # release-mode reads the tag and its annotation from the clone.
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: false
 
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
-
-      - name: Install svu
-        run: go install "github.com/caarlos0/svu/v3@${SVU_VERSION}"
-
-      - name: Resolve the version to release
-        id: version
-        env:
-          RAW: ${{ inputs.version }}
+      # Everything stamped into the image comes from the commit, never from the
+      # clock or the clone.
+      - name: Read the commit's dates
+        id: stamp
         run: |
           set -euo pipefail
-
-          # Only strict vX.Y.Z tags are releases (RELEASE_TAG_REGEX). `latest`,
-          # `v1`, pre-releases and malformed tags are not, so every lookup below
-          # filters the full tag list through the regex rather than taking "the
-          # nearest tag". Prints the highest release tag in its input, or nothing.
-          highest_release() {
-            { grep -E "$RELEASE_TAG_REGEX" || true; } | sort -V | tail -n1
-          }
-          # Whether the release tag $1 sits on HEAD.
-          on_head() {
-            git tag --points-at HEAD | { grep -E "$RELEASE_TAG_REGEX" || true; } | grep -qxF "$1"
-          }
-
-          if [ -n "$RAW" ]; then
-            VERSION="v${RAW#v}"
-            if ! [[ "$VERSION" =~ $RELEASE_TAG_REGEX ]]; then
-              echo "Version must be X.Y.Z or vX.Y.Z with no leading zeros, no pre-release and no build metadata (got '$RAW')" >&2
-              exit 1
-            fi
-            EXPLICIT=true
-          else
-            # svu is given the exact tag to count from, never a glob. It matches
-            # --tag.pattern with a glob library against every tag, so a pattern
-            # would let a stray tag like v1.9.0-rc.1 become the current version.
-            # A strict tag holds only `v`, digits and dots, so as a glob it
-            # matches that one tag literally, and svu counts the commits since
-            # exactly that tag.
-            CURRENT=$(git tag --merged HEAD | highest_release)
-            if [ -z "$CURRENT" ]; then
-              echo "No vX.Y.Z release tag is reachable from this commit, so there is nothing to derive a version from. Re-run with an explicit version." >&2
-              exit 1
-            fi
-            VERSION=$(svu next --tag.pattern "$CURRENT")
-            if ! [[ "$VERSION" =~ $RELEASE_TAG_REGEX ]]; then
-              echo "svu derived '$VERSION' from $CURRENT, which is not a vX.Y.Z release tag." >&2
-              exit 1
-            fi
-            # svu prints the current version unchanged, and exits 0, when no
-            # feat/fix/breaking commit exists since the last tag. That is not a
-            # release: say so rather than tagging the same tree twice - unless
-            # that tag is on HEAD itself. Then this is "Re-run failed jobs" on a
-            # run that derived its version and pushed the tag before failing, and
-            # it must be able to finish what that run started.
-            if [ "$VERSION" = "$CURRENT" ] && ! on_head "$VERSION"; then
-              echo "No feat/fix or breaking-change commit since ${CURRENT}, so there is nothing to bump. Re-run with an explicit version to force one." >&2
-              exit 1
-            fi
-            EXPLICIT=false
-          fi
-
-          # A recovery re-run is this exact version already sitting on HEAD -
-          # nothing wider. Treating "HEAD carries some tag" as recovery would
-          # misread a release cut from a commit that is already tagged with the
-          # previous version.
-          RECOVERY=false
-          if on_head "$VERSION"; then
-            RECOVERY=true
-          fi
-
-          # The previous release, for the summary. On a recovery the tag being
-          # released is on HEAD already, so looking from HEAD would answer with
-          # that tag. HEAD^ does not exist on a root commit, hence the fallback.
-          if [ "$RECOVERY" = "true" ]; then
-            PREVIOUS=$({ git tag --merged "HEAD^" 2>/dev/null || true; } | highest_release)
-          else
-            PREVIOUS=$(git tag --merged HEAD | highest_release)
-          fi
-
-          # A version must be higher than every version already released.
-          # Without this, an explicit v0.9.9 typed after v0.10.0 would create a
-          # lower immutable tag. The one exception is the recovery re-run, which
-          # reuses the version it failed on.
-          LATEST=$(git tag --list | highest_release)
-          # A derived version counts from the highest release reachable from
-          # this commit. When the highest release overall is tagged on a commit
-          # outside this branch, that base is older: name it, so the failure
-          # explains itself.
-          off_branch_hint() {
-            if [ "$EXPLICIT" != "true" ] && ! git merge-base --is-ancestor "$LATEST" HEAD; then
-              echo "$LATEST is tagged on a commit that is not in this branch's history, so the version was derived from $CURRENT instead. Re-run with an explicit version higher than $LATEST." >&2
-            fi
-          }
-          if [ -n "$LATEST" ]; then
-            if [ "$VERSION" = "$LATEST" ]; then
-              if [ "$RECOVERY" != "true" ]; then
-                echo "$VERSION is already released and does not point at this commit. Release a higher version." >&2
-                off_branch_hint
-                exit 1
-              fi
-              echo "Re-running the release of $VERSION, which already points at this commit."
-            elif [ "$RECOVERY" != "true" ]; then
-              HIGHEST=$(printf '%s\n%s\n' "$VERSION" "$LATEST" | sort -V | tail -n1)
-              if [ "$HIGHEST" != "$VERSION" ]; then
-                echo "$VERSION is lower than the latest release $LATEST. Tags here are immutable, so only a higher version may be published." >&2
-                off_branch_hint
-                exit 1
-              fi
-            else
-              echo "Re-running the release of $VERSION, which already points at this commit; $LATEST has been released since, so $VERSION will not become latest."
-            fi
-          fi
-
-          MAJOR="${VERSION#v}"
-          MAJOR="${MAJOR%%.*}"
-          # Everything stamped into the image comes from the commit, never from
-          # the clock or the clone.
-          BUILD_DATE=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ)
-          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
-
-          echo "Resolved $VERSION (previous: ${PREVIOUS:-none}, explicit: $EXPLICIT, recovery: $RECOVERY)"
-          # Outputs, not exports: an exported variable does not survive into the
-          # next step.
           {
-            echo "version=$VERSION"
-            echo "previous=$PREVIOUS"
-            echo "explicit=$EXPLICIT"
-            echo "recovery=$RECOVERY"
-            echo "major=$MAJOR"
-            echo "build_date=$BUILD_DATE"
-            echo "source_date_epoch=$SOURCE_DATE_EPOCH"
+            echo "build_date=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ)"
+            echo "source_date_epoch=$(git log -1 --format=%ct)"
           } >> "$GITHUB_OUTPUT"
 
-      # A tag that already exists is either a re-run recovering a failed publish
-      # - it points at this commit, and the run continues without pushing it
-      # again - or a different commit, which nothing here may overwrite: tags in
-      # this repository are immutable, on purpose.
-      - name: Check the tag
-        id: tag
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
+      # Every FROM pinned by digest and every download verified (the same check
+      # CI runs), so the release builds on the base CI tested.
+      - name: Check the Dockerfile pins
+        uses: leinardi/gh-composite-actions/check-pinned-bases@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
+
+      # The base the final image is built on: the line the release notes carry. The provenance check below asserts the build
+      # really used it.
+      - name: Read the base pin
+        id: base
         run: |
           set -euo pipefail
-
-          HEAD_SHA=$(git rev-parse HEAD)
-          REMOTE=$(git ls-remote origin "refs/tags/$VERSION^{}" "refs/tags/$VERSION" | head -n1 | awk '{print $1}')
-
-          if [ -n "$REMOTE" ]; then
-            PEELED=$(git ls-remote origin "refs/tags/$VERSION^{}" | awk '{print $1}')
-            POINTS_AT="${PEELED:-$REMOTE}"
-            if [ "$POINTS_AT" != "$HEAD_SHA" ]; then
-              echo "$VERSION already exists and points at $POINTS_AT, not at $HEAD_SHA. Tags here are immutable: release a new version instead." >&2
-              exit 1
-            fi
-            echo "$VERSION already exists on this commit: recovering a failed publish."
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+          BASES=$(sed -nE 's/^FROM[[:space:]]+([^[:space:]]+@sha256:[0-9a-f]{64})[[:space:]]+AS[[:space:]]+base[[:space:]]*$/\1/Ip' Dockerfile)
+          if [ "$(grep -c . <<<"$BASES")" -ne 1 ]; then
+            echo "The Dockerfile must have exactly one 'FROM <image>@sha256:<digest> AS base' line (found: ${BASES:-none})." >&2
+            exit 1
           fi
-
-          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
-            LOCAL=$(git rev-list -n1 "$VERSION")
-            if [ "$LOCAL" != "$HEAD_SHA" ]; then
-              echo "The local tag $VERSION points at $LOCAL, not at $HEAD_SHA." >&2
-              exit 1
-            fi
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a "$VERSION" -m "herdquay $VERSION"
-          fi
+          echo "Base: $BASES"
+          echo "image=$BASES" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
@@ -345,85 +216,63 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Installs cosign v3, which stores the signature as a Sigstore bundle in an
-      # OCI 1.1 referring artifact rather than a `.sig` tag. Signing and the
-      # recovery check below both use this same cosign, so they agree; a
-      # consumer needs cosign v3, or v2.6+ with --new-bundle-format, to verify.
-      - name: Install cosign
-        if: ${{ !inputs.dry_run }}
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
-      # The mode is decided here, before anything is built or pushed, from two
-      # lookups: the Git tag (the step above) and the image :<version> on GHCR.
-      # Only "not found" counts as absent: an authentication or network error
-      # stops the run, because reading it as "absent" would let a run push a tag
-      # or an image over something it could not see.
+      # The mode is decided here, before anything is built or pushed, from the Git
+      # tag, the image :<tag> on GHCR and the GitHub release. Only "not found"
+      # counts as absent: any other lookup error stops the run. It also installs
+      # cosign v3, which signs below.
       #
-      #   Git tag         image :<version>                     mode
-      #   absent          absent                               fresh
-      #   absent          present                              stop before tagging
-      #   on this commit  present, attested for this commit    reuse
-      #   on this commit  present, not attested                stop: needs a human
-      #   on this commit  absent                               publish
+      #   Git tag         published                                  mode
+      #   absent          nothing                                    fresh
+      #   absent          an image, or a release                     stop
+      #   on another commit                                          stop
+      #   on this commit  image attested and signed for this commit  reuse
+      #   on this commit  image present, not attested or signed      stop: needs a human
+      #   on this commit  no image                                   publish
       #
-      # A tag on another commit already failed the step above. docs/release.md
-      # describes each mode.
+      # docs/release.md describes each mode.
       - name: Decide the release mode
         id: mode
+        uses: leinardi/gh-composite-actions/release-mode@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
+        with:
+          tag: ${{ needs.guard.outputs.tag }}
+          image: ${{ env.IMAGE_REPO }}
+          platforms: ${{ env.PLATFORMS }}
+          signer-workflow: ${{ env.SIGNER_WORKFLOW }}
+          dry-run: ${{ inputs.dry_run }}
+
+      # The published digest a reuse continues with, from the plan.
+      - name: Read the reused digest
+        id: reused
+        if: steps.mode.outputs.mode == 'reuse'
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-          TAG_EXISTS: ${{ steps.tag.outputs.exists }}
-          DRY_RUN: ${{ inputs.dry_run }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLAN: ${{ steps.mode.outputs.plan-file }}
         run: |
           set -euo pipefail
-
-          if OUT=$(docker buildx imagetools inspect "$IMAGE_REPO:$VERSION" --format '{{json .Manifest}}' 2>&1); then
-            IMAGE_DIGEST=$(jq -r '.digest' <<<"$OUT")
-          elif grep -qiE 'not found|manifest unknown' <<<"$OUT"; then
-            IMAGE_DIGEST=""
-          else
-            echo "Could not tell whether $IMAGE_REPO:$VERSION exists: $OUT" >&2
+          DIGEST=$(jq -r '.images[0].digest // empty' "$PLAN")
+          if ! [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "The plan names no published digest to reuse (got '$DIGEST')." >&2
             exit 1
           fi
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
-          if [ "$TAG_EXISTS" != "true" ]; then
-            if [ -n "$IMAGE_DIGEST" ]; then
-              echo "$IMAGE_REPO:$VERSION already exists ($IMAGE_DIGEST), but the tag $VERSION does not. The version is held by an image, so it cannot be tagged: nothing was pushed. Release a higher version - docs/release.md." >&2
-              exit 1
-            fi
-            MODE=fresh
-          elif [ -z "$IMAGE_DIGEST" ]; then
-            MODE=publish
-          # Verified by digest, not by tag, so what is checked is what is reused.
-          elif gh attestation verify "oci://$IMAGE_REPO@$IMAGE_DIGEST" \
-            --repo leinardi/herdquay \
-            --signer-workflow "$SIGNER_WORKFLOW" \
-            --source-ref refs/heads/main \
-            --source-digest "$GITHUB_SHA"; then
-            MODE=reuse
-          else
-            echo "$IMAGE_REPO:$VERSION ($IMAGE_DIGEST) exists but carries no provenance from $SIGNER_WORKFLOW for commit $GITHUB_SHA. A tag this workflow did not produce is holding the version. Nothing was published and the tag was not touched: the version needs a human - docs/release.md." >&2
-            exit 1
+      # The annotated tag, in the clone only, until the point of no return below.
+      # On a recovery it is already here: release-mode checked it is on this commit.
+      - name: Create the tag locally
+        if: steps.mode.outputs.tag-exists != 'true'
+        env:
+          TAG: ${{ needs.guard.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            exit 0
           fi
-
-          # A dry run rehearses a fresh release whatever the mode: it builds,
-          # tests, scans and copies, and stops at the absence check if the image
-          # exists.
-          BUILD=true
-          if [ "$MODE" = "reuse" ] && [ "$DRY_RUN" != "true" ]; then
-            BUILD=false
-          fi
-
-          echo "Tag on this commit: $TAG_EXISTS. Image: ${IMAGE_DIGEST:-absent}. Mode: $MODE."
-          {
-            echo "mode=$MODE"
-            echo "build=$BUILD"
-            echo "image_digest=$IMAGE_DIGEST"
-          } >> "$GITHUB_OUTPUT"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "herdquay $TAG"
 
       # Host network, so the builder reaches the job-local registry on localhost.
       - name: Set up Buildx
+        if: steps.mode.outputs.build == 'true'
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           driver-opts: network=host
@@ -454,11 +303,13 @@ jobs:
             exit 1
           done
 
-      # The only image build. Pushed by digest with no tag, with the SBOM and
-      # mode=max provenance in the index. Every layer is recompressed as gzip: for
-      # a zstd layer skopeo rewrites the index entries with a compression
-      # annotation, which --preserve-digests then refuses, so the copy below could
-      # not keep the tested digest.
+      # The only image build: the Dockerfile's default target, as CI builds it.
+      # Pushed by digest with no tag, with the SBOM and mode=max provenance in the
+      # index. Every layer is recompressed as gzip: for a zstd layer skopeo
+      # rewrites the index entries with a compression annotation, which
+      # --preserve-digests then refuses, so the copy below could not keep the
+      # tested digest. The layer cache is the release's own scope, which only
+      # this workflow reads and writes.
       - name: Build the image into the job-local registry
         id: build
         if: steps.mode.outputs.build == 'true'
@@ -471,13 +322,51 @@ jobs:
           platforms: ${{ env.PLATFORMS }}
           provenance: mode=max
           sbom: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=release-herdquay
+          cache-to: type=gha,scope=release-herdquay,mode=max
           build-args: |
-            VERSION=${{ steps.version.outputs.version }}
+            VERSION=${{ needs.guard.outputs.tag }}
             REVISION=${{ github.sha }}
-            CREATED=${{ steps.version.outputs.build_date }}
-            SOURCE_DATE_EPOCH=${{ steps.version.outputs.source_date_epoch }}
+            CREATED=${{ steps.stamp.outputs.build_date }}
+            SOURCE_DATE_EPOCH=${{ steps.stamp.outputs.source_date_epoch }}
+
+      # The images the build pulled, read from the provenance of the index it
+      # pushed, must be exactly the Dockerfile's digest pins (the base and the
+      # frontend): no tag resolved to anything CI did not build on. BuildKit's
+      # SBOM scanner (docker/buildkit-syft-scanner) is listed too; it generates
+      # the SBOM attestation and is not part of the image.
+      - name: Check the build used the pinned images
+        if: steps.mode.outputs.build == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          PINS=$({
+            sed -nE 's/^FROM[[:space:]]+[^[:space:]]+@(sha256:[0-9a-f]{64}).*/\1/Ip' Dockerfile
+            sed -nE '1s/^#[[:space:]]*syntax=[^[:space:]]+@(sha256:[0-9a-f]{64}).*/\1/p' Dockerfile
+          } | sort -u)
+          PROVENANCE=$(docker buildx imagetools inspect "$LOCAL_IMAGE@$DIGEST" --format '{{json .Provenance}}')
+          USED=$(jq -r '
+            (.SLSA // .[env.PLATFORMS].SLSA)
+            | (.materials // .buildDefinition.resolvedDependencies // [])[]
+            | select(.uri | startswith("pkg:docker/"))
+            | select(.uri | startswith("pkg:docker/docker/buildkit-syft-scanner@") | not)
+            | "sha256:\(.digest.sha256)"
+          ' <<<"$PROVENANCE" | sort -u)
+          if [ -z "$USED" ]; then
+            echo "The provenance of $DIGEST lists no image the build pulled." >&2
+            exit 1
+          fi
+          if [ "$USED" != "$PINS" ]; then
+            echo "The build pulled images other than the Dockerfile's pins." >&2
+            echo "Pinned:" >&2
+            echo "$PINS" >&2
+            echo "Pulled (provenance):" >&2
+            echo "$USED" >&2
+            exit 1
+          fi
+          echo "The build pulled exactly the pinned images:"
+          echo "$USED"
 
       # The platform image of the index, by its own digest: what is tested and
       # scanned below is exactly what is copied to GHCR.
@@ -498,56 +387,50 @@ jobs:
           fi
           echo "digest=$PLATFORM_DIGEST" >> "$GITHUB_OUTPUT"
 
-      # The tests provision their secrets with POSIX ACLs (scripts/local-secrets.sh).
+      # The test provisions its secrets with POSIX ACLs (scripts/local-secrets.sh).
       - name: Install the ACL tools
         if: steps.mode.outputs.build == 'true'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends acl
 
-      # The smoke and supervision tests of ci.yaml, against the built digest
-      # pulled back from the job-local registry rather than a second build.
-      - name: Test the built image
+      # The short smoke test, against the built digest pulled back from the
+      # job-local registry rather than a second build: the labels name this
+      # version and commit, the container turns healthy, SSH runs the tools and a
+      # stop is clean. The full suite ran in CI (the ci-green job).
+      - name: Smoke-test the built image
         if: steps.mode.outputs.build == 'true'
         env:
           PLATFORM_DIGEST: ${{ steps.platform.outputs.digest }}
           HERDQUAY_IMAGE: herdquay:release
+          HERDQUAY_EXPECT_VERSION: ${{ needs.guard.outputs.tag }}
+          HERDQUAY_EXPECT_REVISION: ${{ github.sha }}
         run: |
           set -euo pipefail
           docker pull "$LOCAL_IMAGE@$PLATFORM_DIGEST"
           docker tag "$LOCAL_IMAGE@$PLATFORM_DIGEST" "$HERDQUAY_IMAGE"
-          tests/smoke.sh
-          tests/supervision.sh
+          tests/release-smoke.sh
           docker image rm "$HERDQUAY_IMAGE" "$LOCAL_IMAGE@$PLATFORM_DIGEST" >/dev/null
 
-      - name: Install Trivy
-        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
-        with:
-          version: ${{ env.TRIVY_VERSION }}
-
       # A HIGH or CRITICAL finding with a fix upstream fails the run here, before
-      # any tag exists. Unfixed findings (most of them the Ubuntu base's) do not:
-      # nothing in this repository can fix them, and the base's security rebuilds
-      # bring the fixes. The only other exceptions are the ones committed in
-      # .trivyignore.yaml, each scoped to its paths, with a reason and an expiry.
+      # any tag exists, the base's own included. Unfixed findings do not. The only
+      # exceptions are the ones committed in .trivyignore.yaml, each scoped to its
+      # paths, with a reason and an expiry. Trivy is its latest release, never
+      # pinned.
       - name: Scan the platform image
         if: steps.mode.outputs.build == 'true'
-        env:
-          PLATFORM_DIGEST: ${{ steps.platform.outputs.digest }}
-        run: |
-          set -euo pipefail
-          echo "Scanning $PLATFORMS: $PLATFORM_DIGEST"
-          trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
-            --ignorefile .trivyignore.yaml --exit-code 1 --platform "$PLATFORMS" \
-            "$LOCAL_IMAGE@$PLATFORM_DIGEST"
+        uses: leinardi/gh-composite-actions/trivy-gate@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
+        with:
+          image: ${{ env.LOCAL_IMAGE }}@${{ steps.platform.outputs.digest }}
+          platform: ${{ env.PLATFORMS }}
 
       # The last look at the tags before the point of no return. Concurrency
       # serializes the workflow, but a tag can also arrive from outside it, and
-      # the check in the version step ran before several minutes of building.
-      # This asks the remote, not the local clone, and it asks now.
+      # the version was resolved before several minutes of building. This asks
+      # the remote, not the local clone, and it asks now.
       - name: Gate the tag
         if: steps.mode.outputs.mode == 'fresh' || inputs.dry_run
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-          EXISTS: ${{ steps.tag.outputs.exists }}
+          TAG: ${{ needs.guard.outputs.tag }}
+          EXISTS: ${{ steps.mode.outputs.tag-exists }}
         run: |
           set -euo pipefail
 
@@ -560,38 +443,38 @@ jobs:
             | sort -V \
             | tail -n1)
 
-          if [ -z "$HIGHEST_REMOTE" ] || [ "$HIGHEST_REMOTE" = "$VERSION" ]; then
+          if [ -z "$HIGHEST_REMOTE" ] || [ "$HIGHEST_REMOTE" = "$TAG" ]; then
             exit 0
           fi
-          HIGHEST=$(printf '%s\n%s\n' "$VERSION" "$HIGHEST_REMOTE" | sort -V | tail -n1)
-          if [ "$HIGHEST" = "$VERSION" ]; then
+          HIGHEST=$(printf '%s\n%s\n' "$TAG" "$HIGHEST_REMOTE" | sort -V | tail -n1)
+          if [ "$HIGHEST" = "$TAG" ]; then
             exit 0
           fi
 
           # A recovery's tag is already on this commit and its artifacts are
           # legitimate; it finishes, and simply does not become latest.
           if [ "$EXISTS" = "true" ]; then
-            echo "::notice::$HIGHEST_REMOTE is higher than $VERSION. Finishing the recovery of $VERSION, which will not become latest."
+            echo "::notice::$HIGHEST_REMOTE is higher than $TAG. Finishing the recovery of $TAG, which will not become latest."
             exit 0
           fi
 
-          echo "$HIGHEST_REMOTE was published while this run was building, so $VERSION would be a lower immutable tag. Nothing was pushed; release a higher version." >&2
+          echo "$HIGHEST_REMOTE was published while this run was building, so $TAG would be a lower immutable tag. Nothing was pushed; release a higher version." >&2
           exit 1
 
       # The image ownership check, right before the tag is pushed: the version
       # must not be held by an image, or the tag would point at a version this
-      # run can never publish. Same fail-closed lookup as the mode step.
+      # run can never publish. Fail-closed: only "not found" reads as absent.
       - name: Check the version image is absent
         if: steps.mode.outputs.mode == 'fresh' || inputs.dry_run
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ needs.guard.outputs.tag }}
         run: |
           set -euo pipefail
-          if OUT=$(docker buildx imagetools inspect "$IMAGE_REPO:$VERSION" 2>&1); then
-            echo "$IMAGE_REPO:$VERSION appeared while this run was building. Nothing was pushed; release a higher version - docs/release.md." >&2
+          if OUT=$(docker buildx imagetools inspect "$IMAGE_REPO:$TAG" 2>&1); then
+            echo "$IMAGE_REPO:$TAG appeared while this run was building. Nothing was pushed; release a higher version - docs/release.md." >&2
             exit 1
           elif ! grep -qiE 'not found|manifest unknown' <<<"$OUT"; then
-            echo "Could not tell whether $IMAGE_REPO:$VERSION exists: $OUT" >&2
+            echo "Could not tell whether $IMAGE_REPO:$TAG exists: $OUT" >&2
             exit 1
           fi
 
@@ -628,32 +511,40 @@ jobs:
       - name: Report what a real run would publish
         if: inputs.dry_run
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-          PREVIOUS: ${{ steps.version.outputs.previous }}
-          EXPLICIT: ${{ steps.version.outputs.explicit }}
+          TAG: ${{ needs.guard.outputs.tag }}
+          PREVIOUS: ${{ needs.guard.outputs.previous }}
+          EXPLICIT: ${{ needs.guard.outputs.explicit }}
           MODE: ${{ steps.mode.outputs.mode }}
           DIGEST: ${{ steps.build.outputs.digest }}
           PLATFORM_DIGEST: ${{ steps.platform.outputs.digest }}
+          BASE: ${{ steps.base.outputs.image }}
         run: |
           set -euo pipefail
           {
-            echo "# Dry run: $VERSION"
+            echo "# Dry run: $TAG"
             echo
             echo "Previous tag: ${PREVIOUS:-none}. Explicit version: $EXPLICIT. A real run would take the $MODE mode."
             echo
-            echo "No tag was created and nothing was published. The image index $DIGEST was built into a job-local registry,"
-            echo "its $PLATFORMS image ($PLATFORM_DIGEST) was tested and scanned, and the index was copied to a second local"
-            echo "registry with its digest and attestation manifests intact."
+            echo "No tag was created and nothing was published. The image index $DIGEST was built on \`$BASE\` into a"
+            echo "job-local registry, its $PLATFORMS image ($PLATFORM_DIGEST) was smoke-tested and scanned, and the index was"
+            echo "copied to a second local registry with its digest and attestation manifests intact."
           } >> "$GITHUB_STEP_SUMMARY"
 
       # The point of no return. Everything after it reuses a published artifact
       # only once it is proven to be this run's and never replaces one, so a
-      # re-run with the same explicit version finishes a failed publish.
+      # re-run with the same explicit version finishes a failed publish. The
+      # token reaches this one git command as a header, never the clone's config.
       - name: Push the tag
         if: ${{ !inputs.dry_run && steps.mode.outputs.mode == 'fresh' }}
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: git push origin "$VERSION"
+          TAG: ${{ needs.guard.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          AUTH=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$AUTH"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH" \
+            push origin "refs/tags/$TAG"
 
       # The tested index, byte for byte, with no tag at all: a version tag is
       # only ever added once the digest has been attested and signed, so an
@@ -694,27 +585,19 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
-      # A new digest is signed. A reused one must already carry this workflow's
-      # own keyless signature, since the version tag is only ever added after
-      # signing; any other signature, from another workflow or a laptop, does
-      # not count, and a reused image without one needs a human.
+      # A new digest is signed with this workflow's keyless identity. A reused one
+      # already carries that signature: release-mode verified it, with its
+      # attestation, before deciding to reuse it.
       - name: Sign the image with cosign (keyless via GitHub OIDC)
         id: sign
         if: ${{ !inputs.dry_run }}
         env:
           MODE: ${{ steps.mode.outputs.mode }}
-          DIGEST: ${{ steps.mode.outputs.image_digest || steps.build.outputs.digest }}
+          DIGEST: ${{ steps.reused.outputs.digest || steps.build.outputs.digest }}
         run: |
           set -euo pipefail
           if [ "$MODE" = "reuse" ]; then
-            if ! cosign verify \
-              --certificate-identity "$SIGNER_IDENTITY" \
-              --certificate-oidc-issuer "$SIGNER_ISSUER" \
-              "$IMAGE_REPO@$DIGEST" >/dev/null; then
-              echo "$IMAGE_REPO@$DIGEST is attested by this workflow but carries no signature from it. Nothing more was published: it needs a human - docs/release.md." >&2
-              exit 1
-            fi
-            echo "$IMAGE_REPO@$DIGEST carries this workflow's signature: reusing it."
+            echo "$IMAGE_REPO@$DIGEST carries this workflow's attestation and signature: reusing it."
           else
             cosign sign --yes "$IMAGE_REPO@$DIGEST"
           fi
@@ -724,57 +607,65 @@ jobs:
       # stop anything: findings are reported as warnings, for a human to judge
       # whether the next version should follow sooner.
       - name: Scan the reused image
+        id: reuse-scan
         if: ${{ !inputs.dry_run && steps.mode.outputs.mode == 'reuse' }}
+        continue-on-error: true
+        uses: leinardi/gh-composite-actions/trivy-gate@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
+        with:
+          image: ${{ env.IMAGE_REPO }}@${{ steps.sign.outputs.digest }}
+          platform: ${{ env.PLATFORMS }}
+
+      - name: Warn about the reused image's findings
+        if: ${{ !inputs.dry_run && steps.mode.outputs.mode == 'reuse' && steps.reuse-scan.outcome != 'success' }}
         env:
           DIGEST: ${{ steps.sign.outputs.digest }}
         run: |
-          set -euo pipefail
-          if ! trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
-            --ignorefile .trivyignore.yaml --exit-code 1 --platform "$PLATFORMS" "$IMAGE_REPO@$DIGEST"; then
-            echo "::warning::The reused $IMAGE_REPO@$DIGEST has fixable HIGH or CRITICAL findings, or could not be scanned. It is already published and was not changed; consider releasing a new version."
-          fi
+          echo "::warning::The reused $IMAGE_REPO@$DIGEST has fixable HIGH or CRITICAL findings, or could not be scanned. It is already published and was not changed; consider releasing a new version."
 
       - name: Tag the image with the version
         if: ${{ !inputs.dry_run && steps.mode.outputs.build == 'true' }}
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ needs.guard.outputs.tag }}
           DIGEST: ${{ steps.sign.outputs.digest }}
         run: |
           set -euo pipefail
           # Checked again right before tagging: a version tag that appeared since
           # the checks above is never overwritten.
-          if OUT=$(docker buildx imagetools inspect "$IMAGE_REPO:$VERSION" 2>&1); then
-            echo "$IMAGE_REPO:$VERSION appeared while this run was publishing. It was not overwritten: re-run to verify it, or hand it to a human - docs/release.md." >&2
+          if OUT=$(docker buildx imagetools inspect "$IMAGE_REPO:$TAG" 2>&1); then
+            echo "$IMAGE_REPO:$TAG appeared while this run was publishing. It was not overwritten: re-run to verify it, or hand it to a human - docs/release.md." >&2
             exit 1
           elif ! grep -qiE 'not found|manifest unknown' <<<"$OUT"; then
-            echo "Could not tell whether $IMAGE_REPO:$VERSION exists: $OUT" >&2
+            echo "Could not tell whether $IMAGE_REPO:$TAG exists: $OUT" >&2
             exit 1
           fi
-          docker buildx imagetools create -t "$IMAGE_REPO:$VERSION" "$IMAGE_REPO@$DIGEST"
+          docker buildx imagetools create -t "$IMAGE_REPO:$TAG" "$IMAGE_REPO@$DIGEST"
 
       # The release carries no assets: the image is the artifact. It is created
-      # as a draft if it does not exist yet, and stays one until the latest
-      # checks below. An asset on it means something outside this workflow
-      # touched it: that needs a human.
+      # as a draft if it does not exist yet, with the base it was built on above
+      # the generated notes, and stays one until the latest checks below. An
+      # asset on it means something outside this workflow touched it: that needs
+      # a human.
       - name: Draft the GitHub release
         if: ${{ !inputs.dry_run }}
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ needs.guard.outputs.tag }}
+          BASE: ${{ steps.base.outputs.image }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if ! OUT=$(gh release view "$VERSION" --json isDraft 2>&1); then
+          if ! OUT=$(gh release view "$TAG" --json isDraft 2>&1); then
             if ! grep -qi 'release not found' <<<"$OUT"; then
-              echo "Could not tell whether the release $VERSION exists: $OUT" >&2
+              echo "Could not tell whether the release $TAG exists: $OUT" >&2
               exit 1
             fi
-            gh release create "$VERSION" --verify-tag --draft --generate-notes --title "$VERSION"
+            gh release create "$TAG" --verify-tag --draft --generate-notes --title "$TAG" \
+              --notes "Built on \`$BASE\`."
           fi
           # Read into a variable first, so a failed lookup stops the step
           # instead of reading as "no assets".
-          NAMES=$(gh release view "$VERSION" --json assets --jq '.assets[].name')
+          NAMES=$(gh release view "$TAG" --json assets --jq '.assets[].name')
           if [ -n "$NAMES" ]; then
-            echo "The release $VERSION carries assets this workflow never uploads: $NAMES. Nothing was changed; it needs a human." >&2
+            echo "The release $TAG carries assets this workflow never uploads: $NAMES. Nothing was changed; it needs a human." >&2
             exit 1
           fi
 
@@ -785,8 +676,8 @@ jobs:
         id: pointers
         if: ${{ !inputs.dry_run }}
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-          MAJOR: ${{ steps.version.outputs.major }}
+          TAG: ${{ needs.guard.outputs.tag }}
+          MAJOR: ${{ needs.guard.outputs.major }}
           DIGEST: ${{ steps.sign.outputs.digest }}
         run: |
           set -euo pipefail
@@ -798,8 +689,8 @@ jobs:
             | { grep -E "$RELEASE_TAG_REGEX" || true; } \
             | sort -V \
             | tail -n1)
-          if [ "$HIGHEST_REMOTE" != "$VERSION" ]; then
-            echo "::notice::$HIGHEST_REMOTE is higher than $VERSION, so :$MAJOR and :latest were left where they are."
+          if [ "$HIGHEST_REMOTE" != "$TAG" ]; then
+            echo "::notice::$HIGHEST_REMOTE is higher than $TAG, so :$MAJOR and :latest were left where they are."
             echo "moved=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -810,7 +701,7 @@ jobs:
         id: publish
         if: ${{ !inputs.dry_run }}
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ needs.guard.outputs.tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
@@ -823,10 +714,10 @@ jobs:
             | sort -V \
             | tail -n1)
           LATEST=false
-          if [ "$HIGHEST_REMOTE" = "$VERSION" ]; then
+          if [ "$HIGHEST_REMOTE" = "$TAG" ]; then
             LATEST=true
           fi
-          gh release edit "$VERSION" --draft=false --latest="$LATEST"
+          gh release edit "$TAG" --draft=false --latest="$LATEST"
           echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
 
       # GHCR tags and GitHub releases cannot be moved together atomically, so a
@@ -836,8 +727,8 @@ jobs:
       - name: Check that the pointers agree
         if: ${{ !inputs.dry_run }}
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-          MAJOR: ${{ steps.version.outputs.major }}
+          TAG: ${{ needs.guard.outputs.tag }}
+          MAJOR: ${{ needs.guard.outputs.major }}
           MOVED: ${{ steps.pointers.outputs.moved }}
         run: |
           set -euo pipefail
@@ -849,27 +740,28 @@ jobs:
             | { grep -E "$RELEASE_TAG_REGEX" || true; } \
             | sort -V \
             | tail -n1)
-          if [ "$MOVED" = "true" ] && [ "$HIGHEST_REMOTE" != "$VERSION" ]; then
-            echo "::warning::$HIGHEST_REMOTE was tagged while $VERSION was publishing. The image :latest and :$MAJOR may point at $VERSION while GitHub marks another release Latest. Fix: re-dispatch $HIGHEST_REMOTE, whose own late checks repoint them; if that tag was created outside this workflow and has no image, retag by hand as docs/release.md describes."
+          if [ "$MOVED" = "true" ] && [ "$HIGHEST_REMOTE" != "$TAG" ]; then
+            echo "::warning::$HIGHEST_REMOTE was tagged while $TAG was publishing. The image :latest and :$MAJOR may point at $TAG while GitHub marks another release Latest. Fix: re-dispatch $HIGHEST_REMOTE, whose own late checks repoint them; if that tag was created outside this workflow and has no image, retag by hand as docs/release.md describes."
           fi
 
       - name: Summarize the release
         if: ${{ !inputs.dry_run }}
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-          PREVIOUS: ${{ steps.version.outputs.previous }}
-          RECOVERY: ${{ steps.tag.outputs.exists }}
+          TAG: ${{ needs.guard.outputs.tag }}
+          PREVIOUS: ${{ needs.guard.outputs.previous }}
+          RECOVERY: ${{ steps.mode.outputs.tag-exists }}
           MODE: ${{ steps.mode.outputs.mode }}
           DIGEST: ${{ steps.sign.outputs.digest }}
+          BASE: ${{ steps.base.outputs.image }}
           MOVED: ${{ steps.pointers.outputs.moved }}
           LATEST: ${{ steps.publish.outputs.latest }}
         run: |
           set -euo pipefail
           {
-            echo "# Released $VERSION"
+            echo "# Released $TAG"
             echo
-            echo "Previous tag: ${PREVIOUS:-none}. Recovery: $RECOVERY. Mode: $MODE."
+            echo "Previous tag: ${PREVIOUS:-none}. Recovery: $RECOVERY. Mode: $MODE. Base: \`$BASE\`."
             echo
-            echo "- [Release](https://github.com/leinardi/herdquay/releases/tag/$VERSION) - marked latest: $LATEST"
-            echo "- [Image](https://github.com/leinardi/herdquay/pkgs/container/herdquay): \`$IMAGE_REPO:$VERSION\` (\`$DIGEST\`) - :latest moved: $MOVED"
+            echo "- [Release](https://github.com/leinardi/herdquay/releases/tag/$TAG) - marked latest: $LATEST"
+            echo "- [Image](https://github.com/leinardi/herdquay/pkgs/container/herdquay): \`$IMAGE_REPO:$TAG\` (\`$DIGEST\`) - :latest moved: $MOVED"
           } >> "$GITHUB_STEP_SUMMARY"
