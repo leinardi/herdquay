@@ -90,8 +90,10 @@ user-facing contract a change must keep true.
   capability, setuid binary, `sudo`, privileged mode, host mount or Docker socket is **high** at
   least, and no read-write path to the host's Docker daemon is ever wired in (the only daemon is the
   dedicated rootless one of `docs/docker-diagnostics.md`).
-- The base is pinned by tag (`ubuntu:26.04`); every downloaded artifact is pinned by version and
-  verified by checksum or signature before use. `curl | sh` of an unpinned script is a finding.
+- The base is pinned by digest (`ubuntu:26.04@sha256:…`, moved by Dependabot); every downloaded
+  artifact is pinned by version and verified by checksum or signature before use, and every
+  Dockerfile download by checksum (`check-pinned-bases`, in CI and the release). `curl | sh` of an
+  unpinned script is a finding.
 - sshd keeps keys-only auth. GitHub is reached over HTTPS only, as the GitHub App: an SSH key or
   ssh_config block for GitHub coming back is a finding. Installation tokens stay on `/tmp`, never
   on the home volume, in `hosts.yml`, on a command line or in an exported variable; a Git token

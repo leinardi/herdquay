@@ -103,11 +103,12 @@ reach, what protects the rest, and which risks are accepted on purpose.
 
 ## Supply chain
 
-The base is `ubuntu:26.04`, pinned by tag so the official image's security rebuilds are picked up.
-Every other download is pinned by version and verified before use: Claude Code, installed into the
-home volume at first start rather than shipped in the image, against its GPG-signed release manifest
-(Anthropic's key vendored in `container/keys/`, its fingerprint pinned in the image), the release
-binaries and toolchains against their published SHA-256 digests, opencode against npm's SHA-512
-integrity (both then update themselves, see above), and the Docker CLI against Docker's apt key
-fingerprint. GitHub is reached over HTTPS only, verified against the system's CA certificates. See
-[updating.md](updating.md).
+The base is `ubuntu:26.04`, pinned by digest so CI and the release build on the same base;
+Dependabot moves the digest to each security rebuild of the official image. Every other download
+is pinned by version and verified before use: Claude Code, installed into the home volume at first
+start rather than shipped in the image, against its GPG-signed release manifest (Anthropic's key
+vendored in `container/keys/`, its fingerprint pinned in the image), the release binaries and
+toolchains against their published SHA-256 digests, opencode against npm's SHA-512 integrity (both
+then update themselves, see above), and the Docker CLI against Docker's apt key (the key file's
+SHA-256 and its fingerprint). GitHub is reached over HTTPS only, verified against the system's CA
+certificates. See [updating.md](updating.md).

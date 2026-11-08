@@ -23,15 +23,17 @@
 # SOFTWARE.
 
 # Ubuntu 26.04 LTS: the owner's desktop release, close to GitHub's Ubuntu runners, and the distro
-# Playwright supports best. Pinned by tag, not digest: the official image is rebuilt with every
-# security update, and each rebuild is one we want.
-ARG BASE_IMAGE=ubuntu:26.04
+# Playwright supports best. Pinned by index digest, so CI and the release build on the same base:
+# Dependabot's docker entry moves the digest to each rebuild of the official image (a security
+# update is a new digest), and the tag keeps the line readable. Written once, in this literal
+# FROM, because Dependabot does not read ARG defaults; both stages below build on it.
+FROM ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c AS base
 
 # -------------------------------------------------------------------------------------------------
 # fetch: downloads and verifies every artifact that does not come from apt. Nothing from this
 # stage reaches the final image except the verified binaries.
 # -------------------------------------------------------------------------------------------------
-FROM ${BASE_IMAGE} AS fetch
+FROM base AS fetch
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG DEBIAN_FRONTEND=noninteractive
@@ -187,9 +189,13 @@ RUN curl -fsSL -o /tmp/opencode.tgz \
 	&& install -D -m 0755 /tmp/package/bin/opencode /usr/local/bin/opencode \
 	&& rm -rf /tmp/opencode.tgz /tmp/package
 
-# Docker's apt signing key, asserted to be the one Docker documents (primary key fingerprint).
+# Docker's apt signing key: the file is pinned by its SHA-256 (sha256sum of
+# https://download.docker.com/linux/ubuntu/gpg), and its primary key is asserted to be the one
+# Docker documents (fingerprint). A new file with the same key changes only the digest.
 ARG DOCKER_SIGNER_FINGERPRINT=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+ARG DOCKER_SIGNER_SHA256=1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570
 RUN curl -fsSL -o /tmp/docker.asc https://download.docker.com/linux/ubuntu/gpg \
+	&& echo "${DOCKER_SIGNER_SHA256}  /tmp/docker.asc" | sha256sum --check --strict - \
 	&& test "$(gpg --show-keys --with-colons /tmp/docker.asc | awk -F: '$1 == "fpr" { print $10; exit }')" \
 		= "${DOCKER_SIGNER_FINGERPRINT}" \
 	&& install -D -m 0644 /tmp/docker.asc /etc/apt/keyrings/docker.asc
@@ -197,7 +203,7 @@ RUN curl -fsSL -o /tmp/docker.asc https://download.docker.com/linux/ubuntu/gpg \
 # -------------------------------------------------------------------------------------------------
 # final
 # -------------------------------------------------------------------------------------------------
-FROM ${BASE_IMAGE}
+FROM base
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG DEBIAN_FRONTEND=noninteractive
