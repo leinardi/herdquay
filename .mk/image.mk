@@ -68,6 +68,10 @@ image-smoke: ## Smoke-test the built image (SSH, doctor, GitHub config, secrets,
 image-supervision: ## Test the built image's supervision (child death, bounded stop, SIGKILL)
 	"$(REPO_ROOT)/tests/supervision.sh"
 
+.PHONY: image-release-smoke
+image-release-smoke: ## Run the release's short smoke test against the built image (labels, health, SSH, stop)
+	"$(REPO_ROOT)/tests/release-smoke.sh"
+
 .PHONY: image-test
 image-test: image-smoke image-supervision ## Run every automated image test
 
