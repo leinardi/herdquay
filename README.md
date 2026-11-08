@@ -71,7 +71,8 @@ make help                # lists every target
 The hooks cover the Dockerfile ([droast](https://github.com/immanuwell/dockerfile-roast), built by
 pre-commit with `cargo`, and running a local `shellcheck`), the Compose harness (dclint), shell
 (shellcheck), the workflows (actionlint), YAML, Markdown, the Makefile and the MIT license headers.
-See [AGENTS.md](AGENTS.md) for the conventions and the validation matrix.
+See [CONTRIBUTING.md](CONTRIBUTING.md) to get started, and [AGENTS.md](AGENTS.md) for the
+conventions and the validation matrix.
 
 ## Credits
 
