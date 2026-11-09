@@ -117,7 +117,10 @@ Shared by every `leinardi/*` repository.
   built from gh-composite-actions (`release-version`, `require-ci-green`, `release-mode`,
   `check-pinned-bases`, `trivy-gate`). svu derives the version from the commits only when none is
   given, and is installed only then, so a version entered by hand releases even when GitHub's
-  release downloads fail. Trivy is never pinned: `trivy-gate` installs its latest release.
+  release downloads fail. Trivy is never pinned: `trivy-gate` installs its latest release. A push
+  to `main` that merges a Dependabot pull request releases a patch on its own when only
+  Dependabot's work is unreleased and one commit is a `fix(deps)` (gh-reusable-workflows'
+  `dependabot-release` with `ecosystems: docker`); every other push stops at that job.
 - **Dependabot:** monthly, `cooldown: default-days: 7`, labels `dependencies` and `ci`, one group
   per ecosystem. The `docker` entry (the base digest) ships, so it is weekly and uses
   `fix(deps)`; GitHub Actions and pre-commit use `chore(deps)`.
@@ -174,7 +177,8 @@ of a shipped `feat` or `fix` is itself a `fix`. `svu` matches `feat`/`fix` anywh
 (e.g. `prefix:` counts as `fix:`), so avoid a word ending in `feat` or `fix` directly before a colon
 in other subjects. PRs land as merge commits, so every commit counts, not just the PR title.
 
-Releases are cut by dispatching `release.yaml` on `main` ([`docs/release.md`](docs/release.md)).
+Releases are cut by dispatching `release.yaml` on `main` ([`docs/release.md`](docs/release.md)),
+or on their own by a Dependabot `fix(deps)` merge (base digest).
 The first one needs an explicit version: there is no tag to derive it from. Tags are immutable, so
 a wrong release is answered with a higher version, never a moved tag.
 

@@ -53,6 +53,26 @@ for up to 30 minutes, and fails if it did not pass ([What CI proves](#what-ci-pr
 **One release runs at a time.** The workflow takes a `release` concurrency group with
 `cancel-in-progress: false`, so a second dispatch queues behind the first rather than racing it.
 
+### Dependabot releases
+
+A merge of a Dependabot pull request releases the next patch on its own, with no dispatch, when
+everything since the last release is Dependabot's and at least one of its commits is a `fix(deps)`
+(the base image's new digest). The workflow also runs on every push to `main`: its `dependabot`
+job calls gh-reusable-workflows'
+[`dependabot-release`](https://github.com/leinardi/gh-reusable-workflows/blob/main/.github/workflows/dependabot-release.md)
+with `ecosystems: docker`, which checks from the API alone that every unreleased commit is
+Dependabot's own (committed by GitHub) or the merge of its pull request, that the change only moves
+action pins and the Dockerfile's `FROM` tag or digest, and that CI passed on the push. Then the
+release runs as a dispatch would, with that patch as an explicit version. Anything else is a green
+no-op with a notice: a `chore(deps)` merge (actions, pre-commit) ships nothing, and a human commit
+waiting to be released leaves the release to a dispatch.
+
+A push that merges a Dependabot pull request takes the same `release` group as a dispatch, so the
+two never publish at once and a lower version never moves `latest` after a higher one. Every other
+push runs in a group of its own and only skips the `dependabot` job. GitHub keeps one pending run
+per group: a Dependabot merge that arrives while a release runs and a dispatch waits replaces that
+dispatch, which shows as cancelled; dispatch it again.
+
 ## Versioning
 
 Semantic versioning, derived from
