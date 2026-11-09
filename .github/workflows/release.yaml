@@ -183,6 +183,11 @@ jobs:
   # full smoke and supervision suites (docs/release.md, "What CI proves").
   ci-green:
     needs: guard
+    # On a dispatch the dependabot job is skipped, and a skipped job anywhere up
+    # the chain skips this one under the implicit success(), even though guard
+    # passed. So the condition is explicit: guard passed, and the run is not
+    # cancelled.
+    if: ${{ !cancelled() && needs.guard.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -198,6 +203,8 @@ jobs:
     needs:
       - guard
       - ci-green
+    # Explicit for the same reason as ci-green's.
+    if: ${{ !cancelled() && needs.guard.result == 'success' && needs.ci-green.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     # Created on first run with no protection rules, which changes nothing by
