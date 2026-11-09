@@ -57,7 +57,7 @@ jobs:
       # base's newer digest. Trivy is its latest release,
       # never pinned, so every scan runs the newest checks.
       - name: Scan the latest release
-        uses: leinardi/gh-composite-actions/trivy-gate@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
+        uses: leinardi/gh-composite-actions/trivy-gate@addc113a34e0a96ca2e08218380fdecad2fdd230 # v1.4.2
         with:
           image: ${{ env.IMAGE_REPO }}@${{ steps.latest.outputs.digest }}
           platform: ${{ env.PLATFORMS }}

@@ -116,11 +116,11 @@ jobs:
       # GitHub's release downloads fail.
       - name: Install svu
         if: inputs.version == ''
-        uses: leinardi/gh-composite-actions/setup-svu@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
+        uses: leinardi/gh-composite-actions/setup-svu@addc113a34e0a96ca2e08218380fdecad2fdd230 # v1.4.2
 
       - name: Resolve the version to release
         id: version
-        uses: leinardi/gh-composite-actions/release-version@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
+        uses: leinardi/gh-composite-actions/release-version@addc113a34e0a96ca2e08218380fdecad2fdd230 # v1.4.2
         with:
           version: ${{ inputs.version }}
 
@@ -148,7 +148,7 @@ jobs:
 
     steps:
       - name: Require CI green on this commit
-        uses: leinardi/gh-composite-actions/require-ci-green@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
+        uses: leinardi/gh-composite-actions/require-ci-green@addc113a34e0a96ca2e08218380fdecad2fdd230 # v1.4.2
         with:
           accepted-events: push
 
@@ -193,7 +193,7 @@ jobs:
       # Every FROM pinned by digest and every download verified (the same check
       # CI runs), so the release builds on the base CI tested.
       - name: Check the Dockerfile pins
-        uses: leinardi/gh-composite-actions/check-pinned-bases@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
+        uses: leinardi/gh-composite-actions/check-pinned-bases@addc113a34e0a96ca2e08218380fdecad2fdd230 # v1.4.2
 
       # The base the final image is built on: the line the release notes carry. The provenance check below asserts the build
       # really used it.
@@ -232,7 +232,7 @@ jobs:
       # docs/release.md describes each mode.
       - name: Decide the release mode
         id: mode
-        uses: leinardi/gh-composite-actions/release-mode@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
+        uses: leinardi/gh-composite-actions/release-mode@addc113a34e0a96ca2e08218380fdecad2fdd230 # v1.4.2
         with:
           tag: ${{ needs.guard.outputs.tag }}
           image: ${{ env.IMAGE_REPO }}
@@ -417,7 +417,7 @@ jobs:
       # pinned.
       - name: Scan the platform image
         if: steps.mode.outputs.build == 'true'
-        uses: leinardi/gh-composite-actions/trivy-gate@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
+        uses: leinardi/gh-composite-actions/trivy-gate@addc113a34e0a96ca2e08218380fdecad2fdd230 # v1.4.2
         with:
           image: ${{ env.LOCAL_IMAGE }}@${{ steps.platform.outputs.digest }}
           platform: ${{ env.PLATFORMS }}
@@ -610,7 +610,7 @@ jobs:
         id: reuse-scan
         if: ${{ !inputs.dry_run && steps.mode.outputs.mode == 'reuse' }}
         continue-on-error: true
-        uses: leinardi/gh-composite-actions/trivy-gate@601a374562bab71a2e17527fa2c24e6247f4a3fc # v1.1.0
+        uses: leinardi/gh-composite-actions/trivy-gate@addc113a34e0a96ca2e08218380fdecad2fdd230 # v1.4.2
         with:
           image: ${{ env.IMAGE_REPO }}@${{ steps.sign.outputs.digest }}
           platform: ${{ env.PLATFORMS }}
