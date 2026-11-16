@@ -108,12 +108,13 @@ happened: report the verification evidence you actually have (under adversarial-
 `verification.txt` when supplied, which is the implementer's claim and not proof; when invoked
 directly, the CI status or gate output in the PR or session) and what is missing, such as a
 `Dockerfile` or `container/**` change with no image build, smoke or supervision test result (and no
-droast result from `make check`). Never say that a check you did not see passed. Judge whether the
-change's tests prove it: a behaviour change needs a test that fails on the old code. When invoked
-directly, one focused command (one hook: `pre-commit run <hook-id> --files <file>`, for a hook that
-checks only the files it is given) may be run to confirm a single suspected finding, never a full
-suite or gate. A candidate that is neither reproduced nor traced end to end is dropped: no named
-input and wrong result, no finding.
+droast result from `make check`). Judge what is missing against `AGENTS.md`'s *Validation matrix*:
+every changed path owes the checks its row names. Never say that a check you did not see passed.
+Judge whether the change's tests prove it: a behaviour change needs a test that fails on the old
+code. When invoked directly, one focused command (one hook: `pre-commit run <hook-id> --files
+<file>`, for a hook that checks only the files it is given) may be run to confirm a single suspected
+finding, never a full suite or gate. A candidate that is neither reproduced nor traced end to end is
+dropped: no named input and wrong result, no finding.
 
 ## Report
 
