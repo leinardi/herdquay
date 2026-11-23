@@ -12,7 +12,7 @@ modules, `npm ci`, pre-commit hook environments, Playwright browsers), cached in
 | Go 1.26 | image: Go 1.26.10; `GOTOOLCHAIN=auto` for a module that asks for more |
 | gcc, libc headers (`-race`, cgo tests) | image: `build-essential`, `pkg-config` |
 | make, git, bash, curl, coreutils | image |
-| Node 24 + npm (lockfile v3) | image: Node 24.22.1; `npm ci` per project; `npm i -g` goes to `~/.local` |
+| Node 24 + npm (lockfile v3) | image: Node 24.22.3; `npm ci` per project; `npm i -g` goes to `~/.local` |
 | Python 3 + venv | image: Python 3.14 (pre-commit, Herdr's hook, `http.server`) |
 | pre-commit 4.6.2 | image; hook environments in `~/.cache/pre-commit` |
 | Rust (rustup, `cargo`) | home volume: `herdquay-rust-install` puts rustup and the stable toolchain (minimum 1.99.1) there at start; `rust-toolchain.toml` channels install on first use; other cargo tools per user, `cargo install --locked` into `~/.cargo/bin` |

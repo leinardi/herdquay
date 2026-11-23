@@ -27,7 +27,7 @@
 # Dependabot's docker entry moves the digest to each rebuild of the official image (a security
 # update is a new digest), and the tag keeps the line readable. Written once, in this literal
 # FROM, because Dependabot does not read ARG defaults; both stages below build on it.
-FROM ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c AS base
+FROM ubuntu:26.04@sha256:d66b366dac61b575bee2aef07e9c26e8070096fbe84a3d4d3eb0da069b5d76db AS base
 
 # -------------------------------------------------------------------------------------------------
 # fetch: downloads and verifies every artifact that does not come from apt. Nothing from this
@@ -61,8 +61,8 @@ RUN curl -fsSL -o /tmp/go.tar.gz "https://go.dev/dl/go${GO_VERSION}.linux-amd64.
 	&& rm /tmp/go.tar.gz
 
 # Node.js, the 24 line every Node project here builds with. Digest from the release's SHASUMS256.txt.
-ARG NODE_VERSION=24.22.1
-ARG NODE_SHA256=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+ARG NODE_VERSION=24.22.3
+ARG NODE_SHA256=4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb
 RUN curl -fsSL -o /tmp/node.tar.xz \
 	"https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
 	&& echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum --check --strict - \
@@ -76,8 +76,8 @@ ARG CARGO_DENY_VERSION=0.20.2
 ARG CARGO_DENY_SHA256=9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
 ARG CHEZMOI_VERSION=2.74.0
 ARG CHEZMOI_SHA256=442ebbe0152f423b302ce5c6d94ff005773e5d61455c45f4be00b3430ae396a2
-ARG GH_VERSION=2.103.0
-ARG GH_SHA256=fdd768eb70f6409f80fcfa9f3a1c0adf0fc98d827ab3ce0bed2ac22762c5d786
+ARG GH_VERSION=2.105.0
+ARG GH_SHA256=79e7ab5db738c48777b696e374f8b428f0647debfb424f44d2f426370407fe2f
 ARG GOLANGCI_LINT_VERSION=2.14.0
 ARG GOLANGCI_LINT_SHA256=ab90aeb7b066f92a33415b638a50fe5344bbb75a0d32ad30cc248d88f81032ab
 ARG GORELEASER_VERSION=2.18.1
@@ -214,9 +214,9 @@ ARG HERDQUAY_UID=568
 ARG HERDQUAY_GID=568
 
 # The Docker CLI and its plugins, client only: there is no daemon in or for this container.
-ARG DOCKER_CLI_VERSION=5:29.9.2-1~ubuntu.26.04~resolute
-ARG DOCKER_BUILDX_VERSION=0.38.1-1~ubuntu.26.04~resolute
-ARG DOCKER_COMPOSE_VERSION=5.6.1-1~ubuntu.26.04~resolute
+ARG DOCKER_CLI_VERSION=5:29.10.0-1~ubuntu.26.04~resolute
+ARG DOCKER_BUILDX_VERSION=0.39.1-1~ubuntu.26.04~resolute
+ARG DOCKER_COMPOSE_VERSION=5.8.0-1~ubuntu.26.04~resolute
 
 COPY --from=fetch /etc/apt/keyrings/docker.asc /etc/apt/keyrings/docker.asc
 
